@@ -1,0 +1,88 @@
+import networkx as nx
+import random
+
+class ToyICDHierarchy:
+    """
+    Build a toy ICD-like tree:
+    - 5 root chapters
+    - each with 5 children
+    - each child with 5 leaf codes
+    => 5 + 25 + 125 = 155 codes
+    """
+    def __init__(self, seed: int = 42):
+        random.seed(seed)
+        self.G = nx.DiGraph()
+        self.codes = []
+        # roots
+        for i in range(5):
+            root = f"C{i}"
+            self.G.add_node(root, depth=0)
+            self.codes.append(root)
+            # 1st level
+            for j in range(5):
+                mid = f"C{i}{j}"
+                self.G.add_node(mid, depth=1)
+                self.G.add_edge(root, mid)
+                self.codes.append(mid)
+                # leaf level
+                for k in range(5):
+                    leaf = f"C{i}{j}{k}"
+                    self.G.add_node(leaf, depth=2)
+                    self.G.add_edge(mid, leaf)
+                    self.codes.append(leaf)
+
+        # map code -> index
+        self.code2idx = {c: i for i, c in enumerate(self.codes)}
+        self.idx2code = {i: c for c, i in self.code2idx.items()}
+
+    def depth(self, code: str) -> int:
+        return self.G.nodes[code]["depth"]
+
+    def tree_distance(self, c1: str, c2: str) -> int:
+        # undirected shortest path
+        return nx.shortest_path_length(self.G.to_undirected(), c1, c2)
+
+
+def sample_toy_trajectories(hier: ToyICDHierarchy,
+                            num_patients: int = 10000,
+                            min_T: int = 3,
+                            max_T: int = 6,
+                            min_codes_per_visit: int = 2,
+                            max_codes_per_visit: int = 5):
+    """
+    Returns a list of trajectories.
+    Each trajectory: list of visits.
+    Each visit: list of code indices.
+    """
+    trajs = []
+    all_leaf_codes = [c for c in hier.codes if hier.depth(c) == 2]
+
+    for _ in range(num_patients):
+        T = random.randint(min_T, max_T)
+        # choose a random leaf as "disease cluster center"
+        base_leaf = random.choice(all_leaf_codes)
+        # get its ancestors for comorbid structure
+        parents = list(hier.G.predecessors(base_leaf))
+        cluster = [base_leaf] + parents
+
+        traj = []
+        for _ in range(T):
+            num_codes = random.randint(min_codes_per_visit, max_codes_per_visit)
+            visit_codes = set()
+            # mostly sample from same cluster + some random noise
+            while len(visit_codes) < num_codes:
+                if random.random() < 0.7:
+                    c = random.choice(cluster)
+                else:
+                    c = random.choice(hier.codes)
+                visit_codes.add(hier.code2idx[c])
+            traj.append(sorted(list(visit_codes)))
+        trajs.append(traj)
+    return trajs
+
+
+if __name__ == "__main__":
+    hier = ToyICDHierarchy()
+    trajs = sample_toy_trajectories(hier)
+    print(len(hier.codes), "codes")
+    print("Example traj:", trajs[0])
