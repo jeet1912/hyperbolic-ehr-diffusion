@@ -1,1 +1,88 @@
 src/__pycache__
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+*.dylib
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# PyTorch artifacts
+*.pt
+*.pth
+*.ckpt
+checkpoints/
+saved_models/
+models/
+weights/
+runs/                # TensorBoard runs
+logs/
+*.tensorboard
+
+# Data files (large / generated)
+data/
+datasets/
+*.csv
+*.tsv
+*.npy
+*.npz
+*.h5
+*.hdf5
+
+# Jupyter
+.ipynb_checkpoints
+# keep .ipynb files if you track notebooks; only ignore checkpoints by default
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# macOS
+.DS_Store
+
+# Python tooling
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.pyre/
+.profile
+.ipynb_checkpoints/
+
+# Environment / credentials
+.env
+.env.* 
+*.env
+
+# Logs
+*.log
+
+# Wheels
+*.whl
+
+# Local config
+local_settings.py
+
+# Optional: ignore large model / dataset folders used for experimentation
+# Uncomment if you store heavy artifacts in these folders
+# artifacts/
+# output/
+# experiments/
