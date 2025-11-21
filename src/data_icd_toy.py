@@ -39,8 +39,11 @@ class ToyICDHierarchy:
         return self.G.nodes[code]["depth"]
 
     def tree_distance(self, c1: str, c2: str) -> int:
-        # undirected shortest path
-        return nx.shortest_path_length(self.G.to_undirected(), c1, c2)
+        # undirected shortest path; nodes under different roots have no path
+        try:
+            return nx.shortest_path_length(self.G.to_undirected(), c1, c2)
+        except nx.NetworkXNoPath:
+            return None
 
 
 def sample_toy_trajectories(hier: ToyICDHierarchy,

@@ -7,6 +7,7 @@ from data_icd_toy import ToyICDHierarchy, sample_toy_trajectories
 from hyperbolic_embeddings import HyperbolicCodeEmbedding, VisitEncoder
 from diffusion import cosine_beta_schedule
 from traj_model import TrajectoryEpsModel
+from metrics_toy import traj_stats
 
 
 class TrajDataset(Dataset):
@@ -50,7 +51,7 @@ def build_visit_tensor(visit_enc: VisitEncoder, flat_visits, B, L, dim, device):
 
 
 def main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
 
     # 1) data
     hier = ToyICDHierarchy()
@@ -103,6 +104,7 @@ def main():
 
         print(f"Epoch {epoch+1} loss: {loss.item():.4f}")
 
+    synthetic_trajs = []
     # diffusion sampling
     eps_model.eval()
     visit_enc.eval()
@@ -139,10 +141,19 @@ def main():
 
     for sample_idx in range(num_samples):
         print(f"\nSample trajectory {sample_idx + 1}:")
+        traj_visits = []
         for visit_idx in range(max_len):
             flat_idx = sample_idx * max_len + visit_idx
-            codes = [hier.idx2code[idx] for idx in topk_idx[flat_idx]]
-            print(f"  Visit {visit_idx + 1}: {codes}")
+            visit_codes = sorted(set(topk_idx[flat_idx]))
+            traj_visits.append(visit_codes)
+            code_names = [hier.idx2code[idx] for idx in visit_codes]
+            print(f"  Visit {visit_idx + 1}: {code_names}")
+        synthetic_trajs.append(traj_visits)
+
+    real_stats = traj_stats(trajs, hier)
+    syn_stats = traj_stats(synthetic_trajs, hier)
+    print("\nReal stats:", real_stats)
+    print("Synthetic (hyperbolic) stats:", syn_stats)
 
 if __name__ == "__main__":
     main()
