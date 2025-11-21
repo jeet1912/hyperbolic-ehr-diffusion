@@ -52,6 +52,86 @@ def build_visit_tensor(visit_enc, flat_visits, B, L, dim, device):
     return x0
 
 
+def sample_trajectories(
+    eps_model,
+    code_emb,
+    visit_enc,
+    hier,
+    alphas,
+    betas,
+    alphas_cumprod,
+    alphas_cumprod_prev,
+    max_len,
+    dim,
+    num_samples,
+    embeddingType,
+    device,
+    print_examples=3,
+):
+    eps_model.eval()
+    visit_enc.eval()
+    synthetic_trajs = []
+
+    with torch.no_grad():
+        x_t = torch.randn(num_samples, max_len, dim, device=device)
+        T = betas.shape[0]
+
+        for timestep in reversed(range(T)):
+            t_batch = torch.full((num_samples,), timestep, dtype=torch.long, device=device)
+            eps_hat = eps_model(x_t, t_batch)
+
+            alpha = alphas[timestep]
+            alpha_bar = alphas_cumprod[timestep]
+            alpha_bar_prev = alphas_cumprod_prev[timestep]
+            beta = betas[timestep]
+
+            coeff = (1 - alpha) / torch.sqrt(1 - alpha_bar)
+            mean = (x_t - coeff * eps_hat) / torch.sqrt(alpha)
+
+            if timestep > 0:
+                posterior_var = beta * (1 - alpha_bar_prev) / (1 - alpha_bar)
+                noise = torch.randn_like(x_t)
+                x_t = mean + torch.sqrt(posterior_var) * noise
+            else:
+                x_t = mean
+
+        sampled_visits = x_t  # approx x0: [num_samples, max_len, dim]
+        visit_vecs = sampled_visits.view(num_samples * max_len, dim)
+
+        codes_per_visit = 4
+
+        if embeddingType == "hyperbolic":
+            code_tangent = visit_enc.manifold.logmap0(code_emb.emb)  # [N, dim]
+            sims = visit_vecs @ code_tangent.t()
+            topk_idx = sims.topk(k=codes_per_visit, dim=-1).indices.cpu().tolist()
+        else:
+            code_matrix = code_emb.emb.weight                        # [N, dim]
+            diff = visit_vecs.unsqueeze(1) - code_matrix.unsqueeze(0)  # [B*L, N, dim]
+            dists_sq = (diff ** 2).sum(-1)                             # [B*L, N]
+            sims = -dists_sq
+            topk_idx = sims.topk(k=codes_per_visit, dim=-1).indices.cpu().tolist()
+
+    # turn flat visits into trajectories
+    for sample_idx in range(num_samples):
+        traj_visits = []
+        for visit_idx in range(max_len):
+            flat_idx = sample_idx * max_len + visit_idx
+            visit_codes = sorted(set(topk_idx[flat_idx]))
+            traj_visits.append(visit_codes)
+        synthetic_trajs.append(traj_visits)
+
+    # print a few examples for sanity
+    for sample_idx in range(min(print_examples, num_samples)):
+        print(f"\nSample trajectory ({embeddingType}) {sample_idx + 1}:")
+        traj_visits = synthetic_trajs[sample_idx]
+        for visit_idx, visit_codes in enumerate(traj_visits):
+            code_names = [hier.idx2code[idx] for idx in visit_codes]
+            print(f"  Visit {visit_idx + 1}: {code_names}")
+
+    return synthetic_trajs
+
+
+
 def main(embeddingType: str):
     device = torch.device("cpu")
 
@@ -81,12 +161,12 @@ def main(embeddingType: str):
     )
 
     # 4) model
-    eps_model = TrajectoryEpsModel(dim=dim, T_max=T).to(device)
+    eps_model = TrajectoryEpsModel(dim=dim, n_layers=4, T_max=T).to(device)
     optimizer = torch.optim.Adam(
         list(eps_model.parameters()) + list(code_emb.parameters()), lr=2e-4
     )
 
-    n_epochs = 5
+    n_epochs = 20
 
     for epoch in range(n_epochs):
         eps_model.train()
@@ -114,70 +194,31 @@ def main(embeddingType: str):
 
         print(f"Epoch {epoch+1} loss: {loss.item():.4f}")
 
-    # 5) diffusion sampling
-    synthetic_trajs = []
-    eps_model.eval()
-    visit_enc.eval()
-    num_samples = 3
-
-    with torch.no_grad():
-        x_t = torch.randn(num_samples, max_len, dim, device=device)
-        for timestep in reversed(range(T)):
-            t_batch = torch.full((num_samples,), timestep, dtype=torch.long, device=device)
-            eps_hat = eps_model(x_t, t_batch)
-
-            alpha = alphas[timestep]
-            alpha_bar = alphas_cumprod[timestep]
-            alpha_bar_prev = alphas_cumprod_prev[timestep]
-            beta = betas[timestep]
-
-            coeff = (1 - alpha) / torch.sqrt(1 - alpha_bar)
-            mean = (x_t - coeff * eps_hat) / torch.sqrt(alpha)
-
-            if timestep > 0:
-                posterior_var = beta * (1 - alpha_bar_prev) / (1 - alpha_bar)
-                noise = torch.randn_like(x_t)
-                x_t = mean + torch.sqrt(posterior_var) * noise
-            else:
-                x_t = mean
-
-        sampled_visits = x_t  # approx x_0, shape [num_samples, max_len, dim]
-        visit_vecs = sampled_visits.view(num_samples * max_len, dim)  # [B*L, dim]
-
-        codes_per_visit = 4
-
-        if embeddingType == "hyperbolic":
-            # decode in hyperbolic: map code embeddings to tangent space, then NN
-            code_tangent = visit_enc.manifold.logmap0(code_emb.emb)  # [N, dim]
-            sims = visit_vecs @ code_tangent.t()                     # [B*L, N]
-            topk_idx = sims.topk(k=codes_per_visit, dim=-1).indices.cpu().tolist()
-        else:
-            # Euclidean: plain NN search in embedding space
-            code_matrix = code_emb.emb.weight                        # [N, dim]
-            # negative squared L2 distance as similarity
-            diff = visit_vecs.unsqueeze(1) - code_matrix.unsqueeze(0)  # [B*L, N, dim]
-            dists_sq = (diff ** 2).sum(-1)                             # [B*L, N]
-            sims = -dists_sq
-            topk_idx = sims.topk(k=codes_per_visit, dim=-1).indices.cpu().tolist()
-
-    # turn flat visits into trajectories and print
-    for sample_idx in range(num_samples):
-        print(f"\nSample trajectory ({embeddingType}) {sample_idx + 1}:")
-        traj_visits = []
-        for visit_idx in range(max_len):
-            flat_idx = sample_idx * max_len + visit_idx
-            visit_codes = sorted(set(topk_idx[flat_idx]))
-            traj_visits.append(visit_codes)
-            code_names = [hier.idx2code[idx] for idx in visit_codes]
-            print(f"  Visit {visit_idx + 1}: {code_names}")
-        synthetic_trajs.append(traj_visits)
-
-    # 6) metrics
+    # 5) metrics
     real_stats = traj_stats(trajs, hier)
-    syn_stats = traj_stats(synthetic_trajs, hier)
-
     print("\nReal stats:", real_stats)
-    print(f"Synthetic ({embeddingType}) stats:", syn_stats)
+
+    # sample MANY for evaluation
+    num_samples_for_eval = 1000
+    synthetic_trajs = sample_trajectories(
+        eps_model,
+        code_emb,
+        visit_enc,
+        hier,
+        alphas,
+        betas,
+        alphas_cumprod,
+        alphas_cumprod_prev,
+        max_len,
+        dim,
+        num_samples_for_eval,
+        embeddingType,
+        device,
+        print_examples=3,
+    )
+
+    syn_stats = traj_stats(synthetic_trajs, hier)
+    print(f"\nSynthetic ({embeddingType}) stats (N={num_samples_for_eval}):", syn_stats)
 
 
 if __name__ == "__main__":
