@@ -7,12 +7,13 @@ class ToyICDHierarchy:
     - 5 root chapters
     - each with 5 children
     - each child with 5 leaf codes
-    => 5 + 25 + 125 = 155 codes
+    => 5 + 25 + 125 = 155 codes (base)
     """
-    def __init__(self, seed: int = 42):
+    def __init__(self, seed: int = 42, extra_depth: int = 0):
         random.seed(seed)
         self.G = nx.DiGraph()
         self.codes = []
+        self.extra_depth = extra_depth
         # roots
         for i in range(5):
             root = f"C{i}"
@@ -31,9 +32,26 @@ class ToyICDHierarchy:
                     self.G.add_edge(mid, leaf)
                     self.codes.append(leaf)
 
-        # map code -> index
+        if extra_depth > 0:
+            base_leaves = [c for c in self.codes if self.G.out_degree(c) == 0]
+            for leaf in base_leaves:
+                parent = leaf
+                for d in range(extra_depth):
+                    child = f"{leaf}d{d}"
+                    depth = self.G.nodes[parent]["depth"] + 1
+                    self.G.add_node(child, depth=depth)
+                    self.G.add_edge(parent, child)
+                    self.codes.append(child)
+                    parent = child
+
+        self._finalize()
+
+    def _finalize(self):
         self.code2idx = {c: i for i, c in enumerate(self.codes)}
         self.idx2code = {i: c for c, i in self.code2idx.items()}
+        depths = nx.get_node_attributes(self.G, "depth")
+        self.max_depth = max(depths.values()) if depths else 0
+        self.leaf_codes = [c for c in self.codes if self.G.out_degree(c) == 0]
 
     def depth(self, code: str) -> int:
         return self.G.nodes[code]["depth"]
@@ -58,7 +76,7 @@ def sample_toy_trajectories(hier: ToyICDHierarchy,
     Each visit: list of code indices.
     """
     trajs = []
-    all_leaf_codes = [c for c in hier.codes if hier.depth(c) == 2]
+    all_leaf_codes = hier.leaf_codes
 
     for _ in range(num_patients):
         T = random.randint(min_T, max_T)

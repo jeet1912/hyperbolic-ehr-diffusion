@@ -140,7 +140,12 @@ def code_pair_loss(code_emb, hier, device, num_pairs=512):
     idx_j = torch.randint(0, n_real, (num_pairs,), device=device)
 
     # slice off pad row if present: emb[:n_real] are real codes
-    emb = code_emb.emb[:n_real]  # [n_real, dim]
+    base_emb = code_emb.emb
+    if isinstance(base_emb, nn.Embedding):
+        emb_tensor = base_emb.weight
+    else:
+        emb_tensor = base_emb
+    emb = emb_tensor[:n_real]  # [n_real, dim]
 
     d_hyper_list = []
     d_tree_list = []
@@ -153,6 +158,8 @@ def code_pair_loss(code_emb, hier, device, num_pairs=512):
         c1 = hier.idx2code[i]
         c2 = hier.idx2code[j]
         d_tree = hier.tree_distance(c1, c2)
+        if d_tree is None:
+            continue
         d_tree_list.append(d_tree)
 
         # hyperbolic vs euclidean distance
@@ -574,7 +581,7 @@ def _format_float_for_name(val):
 
 def _plot_single_curve(values, title, filename):
     epochs = range(1, len(values) + 1)
-    plt.figure(figsize=(6, 4))
+    plt.figure(figsize=(10, 6))
     plt.plot(epochs, values)
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
@@ -588,18 +595,24 @@ def save_loss_curves(train_losses, val_losses, meta):
     base_dir = os.path.join("results", "plots")
     os.makedirs(base_dir, exist_ok=True)
     tag = (
+        f"{meta['experiment']}_depth{meta['hier_depth']}_"
         f"{meta['embedding']}_dim{meta['dim']}_layers{meta['layers']}_T{meta['T']}_"
         f"reg{'on' if meta['use_reg'] else 'off'}_"
         f"lt{_format_float_for_name(meta['lambda_tree'])}_"
         f"lr{_format_float_for_name(meta['lambda_radius'])}"
     )
 
-    train_title = f"{meta['embedding']} Train Loss (dim={meta['dim']}, layers={meta['layers']})"
+    depth_info = f"depth={meta['hier_depth']}, exp={meta['experiment']}"
+    train_title = (
+        f"{meta['embedding']} Train Loss (dim={meta['dim']}, layers={meta['layers']}, {depth_info})"
+    )
     train_path = os.path.join(base_dir, f"{tag}_train.png")
     _plot_single_curve(train_losses, train_title, train_path)
 
     if val_losses:
-        val_title = f"{meta['embedding']} Val Loss (dim={meta['dim']}, layers={meta['layers']})"
+        val_title = (
+            f"{meta['embedding']} Val Loss (dim={meta['dim']}, layers={meta['layers']}, {depth_info})"
+        )
         val_path = os.path.join(base_dir, f"{tag}_val.png")
         _plot_single_curve(val_losses, val_title, val_path)
 
@@ -647,6 +660,7 @@ def main(
     use_regularization: bool = True,
     traj_splits=None,
     hier=None,
+    experiment_name: str = "base",
 ):
     device = torch.device("cpu")
 
@@ -746,6 +760,8 @@ def main(
         "use_reg": use_regularization,
         "lambda_tree": lambda_tree,
         "lambda_radius": lambda_radius,
+        "hier_depth": getattr(hier, "max_depth", None),
+        "experiment": experiment_name,
     }
     save_loss_curves(train_losses, val_losses, meta)
     print("Saved loss curves to results/plots")
@@ -802,20 +818,33 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    hier = ToyICDHierarchy()
-    all_trajs = sample_toy_trajectories(hier, num_patients=20000)
-    splits = split_trajectories(all_trajs, seed=42)
-    real_stats = traj_stats(all_trajs, hier)
-    print("\nReal stats:", real_stats)
+    experiments = [
+        ("depth2_base", ToyICDHierarchy(extra_depth=0)),
+        ("depth7_extended", ToyICDHierarchy(extra_depth=5)),
+    ]
 
-    # 1) Hyperbolic, no regularization
-    main("hyperbolic", use_regularization=False, traj_splits=splits, hier=hier)
+    configs = [
+        ("hyperbolic", False),
+        ("euclidean", False),
+        ("hyperbolic", True),
+        ("euclidean", True),
+    ]
 
-    # 2) Euclidean, no regularization
-    main("euclidean", use_regularization=False, traj_splits=splits, hier=hier)
+    for exp_name, hier in experiments:
+        all_trajs = sample_toy_trajectories(hier, num_patients=20000)
+        splits = split_trajectories(all_trajs, seed=42)
+        real_stats = traj_stats(all_trajs, hier)
+        print(f"\nReal stats ({exp_name}, max_depth={hier.max_depth}): {real_stats}")
 
-    # 3) Hyperbolic, with regularization
-    main("hyperbolic", use_regularization=True, traj_splits=splits, hier=hier)
-
-    # 4) Euclidean, with regularization
-    main("euclidean", use_regularization=True, traj_splits=splits, hier=hier)
+        for embedding, use_reg in configs:
+            print(
+                f"\n=== Experiment {exp_name} | depth {hier.max_depth} | "
+                f"{embedding} | regularization={'on' if use_reg else 'off'} ==="
+            )
+            main(
+                embeddingType=embedding,
+                use_regularization=use_reg,
+                traj_splits=splits,
+                hier=hier,
+                experiment_name=exp_name,
+            )
