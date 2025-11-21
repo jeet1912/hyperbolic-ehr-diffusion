@@ -1,6 +1,9 @@
+import os
 import torch
 import numpy as np
 import random
+import copy
+import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
@@ -52,6 +55,72 @@ def build_visit_tensor(visit_enc, flat_visits, B, L, dim, device):
     return x0
 
 
+def decode_visit_vectors(sampled_visits, code_emb, visit_enc, embedding_type, codes_per_visit):
+    num_samples, max_len, dim = sampled_visits.shape
+    visit_vecs = sampled_visits.view(num_samples * max_len, dim)
+    if embedding_type == "hyperbolic":
+        code_tangent = visit_enc.manifold.logmap0(code_emb.emb)  # [N, dim]
+        sims = visit_vecs @ code_tangent.t()
+    else:
+        code_matrix = code_emb.emb.weight
+        diff = visit_vecs.unsqueeze(1) - code_matrix.unsqueeze(0)
+        sims = -(diff ** 2).sum(-1)
+    topk_idx = sims.topk(k=codes_per_visit, dim=-1).indices
+    return topk_idx.view(num_samples, max_len, codes_per_visit).cpu()
+
+
+def visits_from_indices(indices_tensor):
+    visits = []
+    flattened = indices_tensor.view(-1, indices_tensor.shape[-1])
+    for visit_codes in flattened:
+        unique_codes = sorted(set(int(c) for c in visit_codes.tolist()))
+        visits.append(unique_codes)
+    return visits
+
+
+def mean_tree_distance_from_visits(visit_lists, hier):
+    dists = []
+    for visit in visit_lists:
+        filtered = [c for c in visit if c >= 0]
+        if len(filtered) < 2:
+            continue
+        codes = [hier.idx2code[i] for i in filtered]
+        for i in range(len(codes)):
+            for j in range(i + 1, len(codes)):
+                dist = hier.tree_distance(codes[i], codes[j])
+                if dist is not None:
+                    dists.append(dist)
+    if not dists:
+        return None
+    return float(sum(dists) / len(dists))
+
+
+def sample_fake_visit_indices(
+    eps_model,
+    num_samples,
+    max_len,
+    dim,
+    T,
+    alphas_cumprod,
+    code_emb,
+    visit_enc,
+    codes_per_visit,
+    device,
+    embedding_type,
+):
+    was_training = eps_model.training
+    eps_model.eval()
+    with torch.no_grad():
+        x_t = torch.randn(num_samples, max_len, dim, device=device)
+        t = torch.randint(0, T, (num_samples,), device=device)
+        a_bar_t = alphas_cumprod[t].view(num_samples, 1, 1)
+        eps_hat = eps_model(x_t, t)
+        x0_pred = (x_t - torch.sqrt(1 - a_bar_t) * eps_hat) / torch.sqrt(a_bar_t)
+    if was_training:
+        eps_model.train()
+    return decode_visit_vectors(x0_pred, code_emb, visit_enc, embedding_type, codes_per_visit)
+
+
 def sample_trajectories(
     eps_model,
     code_emb,
@@ -66,6 +135,7 @@ def sample_trajectories(
     num_samples,
     embeddingType,
     device,
+    codes_per_visit,
     print_examples=3,
 ):
     eps_model.eval()
@@ -96,27 +166,18 @@ def sample_trajectories(
                 x_t = mean
 
         sampled_visits = x_t  # approx x0: [num_samples, max_len, dim]
-        visit_vecs = sampled_visits.view(num_samples * max_len, dim)
+        decoded_idx = decode_visit_vectors(
+            sampled_visits, code_emb, visit_enc, embeddingType, codes_per_visit
+        )
 
-        codes_per_visit = 4
-
-        if embeddingType == "hyperbolic":
-            code_tangent = visit_enc.manifold.logmap0(code_emb.emb)  # [N, dim]
-            sims = visit_vecs @ code_tangent.t()
-            topk_idx = sims.topk(k=codes_per_visit, dim=-1).indices.cpu().tolist()
-        else:
-            code_matrix = code_emb.emb.weight                        # [N, dim]
-            diff = visit_vecs.unsqueeze(1) - code_matrix.unsqueeze(0)  # [B*L, N, dim]
-            dists_sq = (diff ** 2).sum(-1)                             # [B*L, N]
-            sims = -dists_sq
-            topk_idx = sims.topk(k=codes_per_visit, dim=-1).indices.cpu().tolist()
+    decoded_idx = decoded_idx.view(num_samples, max_len, codes_per_visit)
 
     # turn flat visits into trajectories
     for sample_idx in range(num_samples):
         traj_visits = []
         for visit_idx in range(max_len):
-            flat_idx = sample_idx * max_len + visit_idx
-            visit_codes = sorted(set(topk_idx[flat_idx]))
+            visit_codes = decoded_idx[sample_idx, visit_idx].tolist()
+            visit_codes = sorted(set(int(c) for c in visit_codes))
             traj_visits.append(visit_codes)
         synthetic_trajs.append(traj_visits)
 
@@ -131,16 +192,358 @@ def sample_trajectories(
     return synthetic_trajs
 
 
+def split_trajectories(trajs, train_ratio=0.8, val_ratio=0.1, seed=42):
+    indices = list(range(len(trajs)))
+    rng = random.Random(seed)
+    rng.shuffle(indices)
+    n_total = len(indices)
+    n_train = int(n_total * train_ratio)
+    n_val = int(n_total * val_ratio)
+    train_idx = indices[:n_train]
+    val_idx = indices[n_train : n_train + n_val]
+    test_idx = indices[n_train + n_val :]
 
-def main(embeddingType: str):
+    def gather(idxs):
+        return [trajs[i] for i in idxs]
+
+    return gather(train_idx), gather(val_idx), gather(test_idx)
+
+
+def compute_batch_loss(
+    flat_visits,
+    B,
+    L,
+    eps_model,
+    visit_enc,
+    code_emb,
+    hier,
+    alphas_cumprod,
+    T,
+    max_len,
+    dim,
+    device,
+    embedding_type,
+    codes_per_visit,
+    lambda_tree,
+    lambda_radius,
+    depth_targets,
+    fake_sample_size=2,
+):
+    x0 = build_visit_tensor(visit_enc, flat_visits, B, L, dim, device)
+    t = torch.randint(0, T, (B,), device=device).long()
+    a_bar_t = alphas_cumprod[t].view(B, 1, 1)
+    eps = torch.randn_like(x0)
+    x_t = torch.sqrt(a_bar_t) * x0 + torch.sqrt(1 - a_bar_t) * eps
+    eps_hat = eps_model(x_t, t)
+    loss = torch.mean((eps - eps_hat) ** 2)
+
+    if lambda_tree > 0.0:
+        real_visit_lists = []
+        for visit in flat_visits:
+            visit_codes = [int(x) for x in visit.tolist() if int(x) >= 0]
+            real_visit_lists.append(visit_codes)
+        D_tree_real = mean_tree_distance_from_visits(real_visit_lists, hier)
+        fake_indices = sample_fake_visit_indices(
+            eps_model,
+            num_samples=fake_sample_size,
+            max_len=max_len,
+            dim=dim,
+            T=T,
+            alphas_cumprod=alphas_cumprod,
+            code_emb=code_emb,
+            visit_enc=visit_enc,
+            codes_per_visit=codes_per_visit,
+            device=device,
+            embedding_type=embedding_type,
+        )
+        fake_visit_lists = visits_from_indices(fake_indices)
+        D_tree_fake = mean_tree_distance_from_visits(fake_visit_lists, hier)
+        D_tree_real = 0.0 if D_tree_real is None else D_tree_real
+        D_tree_fake = 0.0 if D_tree_fake is None else D_tree_fake
+        tree_penalty = lambda_tree * abs(D_tree_real - D_tree_fake)
+        loss = loss + torch.tensor(tree_penalty, dtype=torch.float32, device=device)
+
+    if embedding_type == "hyperbolic" and depth_targets is not None and lambda_radius > 0.0:
+        radius = torch.norm(code_emb.emb, dim=-1)
+        radius_mismatch = torch.mean((radius - depth_targets) ** 2)
+        loss = loss + lambda_radius * radius_mismatch
+
+    return loss
+
+
+def run_epoch(
+    loader,
+    eps_model,
+    visit_enc,
+    code_emb,
+    hier,
+    alphas_cumprod,
+    T,
+    max_len,
+    dim,
+    device,
+    embedding_type,
+    codes_per_visit,
+    lambda_tree,
+    lambda_radius,
+    depth_targets,
+    optimizer=None,
+    fake_sample_size=2,
+):
+    is_training = optimizer is not None
+    if is_training:
+        eps_model.train()
+    else:
+        eps_model.eval()
+
+    total_loss = 0.0
+    total_samples = 0
+    context = torch.enable_grad if is_training else torch.no_grad
+    with context():
+        for flat_visits, B, L in loader:
+            flat_visits = [v.to(device) for v in flat_visits]
+            loss = compute_batch_loss(
+                flat_visits,
+                B,
+                L,
+                eps_model,
+                visit_enc,
+                code_emb,
+                hier,
+                alphas_cumprod,
+                T,
+                max_len,
+                dim,
+                device,
+                embedding_type,
+                codes_per_visit,
+                lambda_tree,
+                lambda_radius,
+                depth_targets,
+                fake_sample_size=fake_sample_size,
+            )
+
+            if is_training:
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+            total_loss += loss.item() * B
+            total_samples += B
+
+    avg_loss = total_loss / max(total_samples, 1)
+    return avg_loss
+
+
+def train_model(
+    eps_model,
+    code_emb,
+    visit_enc,
+    train_loader,
+    val_loader,
+    hier,
+    alphas_cumprod,
+    T,
+    max_len,
+    dim,
+    device,
+    embedding_type,
+    codes_per_visit,
+    lambda_tree,
+    lambda_radius,
+    depth_targets,
+    n_epochs=20,
+):
+    optimizer = torch.optim.Adam(
+        list(eps_model.parameters()) + list(code_emb.parameters()), lr=2e-4
+    )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=3
+    )
+
+    best_val = float("inf")
+    best_weights = {
+        "eps_model": copy.deepcopy(eps_model.state_dict()),
+        "code_emb": copy.deepcopy(code_emb.state_dict()),
+    }
+
+    train_losses = []
+    val_losses = []
+
+    for epoch in range(1, n_epochs + 1):
+        train_loss = run_epoch(
+            train_loader,
+            eps_model,
+            visit_enc,
+            code_emb,
+            hier,
+            alphas_cumprod,
+            T,
+            max_len,
+            dim,
+            device,
+            embedding_type,
+            codes_per_visit,
+            lambda_tree,
+            lambda_radius,
+            depth_targets,
+            optimizer=optimizer,
+        )
+        val_loss = run_epoch(
+            val_loader,
+            eps_model,
+            visit_enc,
+            code_emb,
+            hier,
+            alphas_cumprod,
+            T,
+            max_len,
+            dim,
+            device,
+            embedding_type,
+            codes_per_visit,
+            lambda_tree,
+            lambda_radius,
+            depth_targets,
+            optimizer=None,
+        )
+
+        scheduler.step(val_loss)
+
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
+
+        print(
+            f"Epoch {epoch}/{n_epochs}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}"
+        )
+
+        if val_loss < best_val:
+            best_val = val_loss
+            best_weights = {
+                "eps_model": copy.deepcopy(eps_model.state_dict()),
+                "code_emb": copy.deepcopy(code_emb.state_dict()),
+            }
+
+    eps_model.load_state_dict(best_weights["eps_model"])
+    code_emb.load_state_dict(best_weights["code_emb"])
+    return train_losses, val_losses, best_val
+
+
+def evaluate_loader(
+    loader,
+    eps_model,
+    visit_enc,
+    code_emb,
+    hier,
+    alphas_cumprod,
+    T,
+    max_len,
+    dim,
+    device,
+    embedding_type,
+    codes_per_visit,
+    lambda_tree,
+    lambda_radius,
+    depth_targets,
+):
+    eps_model.eval()
+    with torch.no_grad():
+        total_loss = 0.0
+        total_samples = 0
+        for flat_visits, B, L in loader:
+            flat_visits = [v.to(device) for v in flat_visits]
+            loss = compute_batch_loss(
+                flat_visits,
+                B,
+                L,
+                eps_model,
+                visit_enc,
+                code_emb,
+                hier,
+                alphas_cumprod,
+                T,
+                max_len,
+                dim,
+                device,
+                embedding_type,
+                codes_per_visit,
+                lambda_tree,
+                lambda_radius,
+                depth_targets,
+            )
+            total_loss += loss.item() * B
+            total_samples += B
+    return total_loss / max(total_samples, 1)
+
+
+
+def _format_float_for_name(val):
+    if isinstance(val, float):
+        s = f"{val:.4f}".rstrip("0").rstrip(".")
+        return s.replace(".", "p") if s else "0"
+    return str(val)
+
+
+def _plot_single_curve(values, title, filename):
+    epochs = range(1, len(values) + 1)
+    plt.figure(figsize=(6, 4))
+    plt.plot(epochs, values)
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(filename)
+    plt.close()
+
+
+def save_loss_curves(train_losses, val_losses, meta):
+    base_dir = os.path.join("results", "plots")
+    os.makedirs(base_dir, exist_ok=True)
+    tag = (
+        f"{meta['embedding']}_dim{meta['dim']}_layers{meta['layers']}_T{meta['T']}_"
+        f"reg{'on' if meta['use_reg'] else 'off'}_"
+        f"lt{_format_float_for_name(meta['lambda_tree'])}_"
+        f"lr{_format_float_for_name(meta['lambda_radius'])}"
+    )
+
+    train_title = f"{meta['embedding']} Train Loss (dim={meta['dim']}, layers={meta['layers']})"
+    train_path = os.path.join(base_dir, f"{tag}_train.png")
+    _plot_single_curve(train_losses, train_title, train_path)
+
+    if val_losses:
+        val_title = f"{meta['embedding']} Val Loss (dim={meta['dim']}, layers={meta['layers']})"
+        val_path = os.path.join(base_dir, f"{tag}_val.png")
+        _plot_single_curve(val_losses, val_title, val_path)
+
+
+def main(
+    embeddingType: str,
+    use_regularization: bool = True,
+    traj_splits=None,
+    hier=None,
+    real_stats=None,
+):
     device = torch.device("cpu")
 
     # 1) data
-    hier = ToyICDHierarchy()
-    trajs = sample_toy_trajectories(hier, num_patients=20000)
+    if hier is None:
+        hier = ToyICDHierarchy()
+    if traj_splits is None:
+        trajs = sample_toy_trajectories(hier, num_patients=20000)
+        train_trajs, val_trajs, test_trajs = split_trajectories(trajs, seed=42)
+    else:
+        train_trajs, val_trajs, test_trajs = traj_splits
+        trajs = train_trajs + val_trajs + test_trajs
     max_len = 6
-    ds = TrajDataset(trajs, max_len=max_len)
-    dl = DataLoader(ds, batch_size=64, shuffle=True, collate_fn=collate_fn)
+
+    batch_size = 64
+    train_ds = TrajDataset(train_trajs, max_len=max_len)
+    val_ds = TrajDataset(val_trajs, max_len=max_len)
+    test_ds = TrajDataset(test_trajs, max_len=max_len)
+
+    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+    val_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    test_dl = DataLoader(test_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
     # 2) embeddings + visit encoder
     dim = 16
@@ -161,42 +564,74 @@ def main(embeddingType: str):
     )
 
     # 4) model
-    eps_model = TrajectoryEpsModel(dim=dim, n_layers=4, T_max=T).to(device)
-    optimizer = torch.optim.Adam(
-        list(eps_model.parameters()) + list(code_emb.parameters()), lr=2e-4
+    n_layers = 2
+    eps_model = TrajectoryEpsModel(dim=dim, n_layers=n_layers, T_max=T).to(device)
+    codes_per_visit = 4
+    lambda_tree = 0.01 if use_regularization else 0.0
+    lambda_radius = 0.01 if (embeddingType == "hyperbolic" and use_regularization) else 0.0
+    depth_targets = None
+    if embeddingType == "hyperbolic" and lambda_radius > 0.0:
+        max_depth = max(hier.depth(code) for code in hier.codes)
+        depth_targets = torch.tensor(
+            [hier.depth(code) / max_depth for code in hier.codes],
+            dtype=torch.float32,
+            device=device,
+        )
+
+    train_losses, val_losses, best_val = train_model(
+        eps_model,
+        code_emb,
+        visit_enc,
+        train_dl,
+        val_dl,
+        hier,
+        alphas_cumprod,
+        T,
+        max_len,
+        dim,
+        device,
+        embeddingType,
+        codes_per_visit,
+        lambda_tree,
+        lambda_radius,
+        depth_targets,
+        n_epochs=20,
     )
+    print(f"Best validation loss: {best_val:.6f}")
+    meta = {
+        "embedding": embeddingType,
+        "dim": dim,
+        "layers": n_layers,
+        "T": T,
+        "use_reg": use_regularization,
+        "lambda_tree": lambda_tree,
+        "lambda_radius": lambda_radius,
+    }
+    save_loss_curves(train_losses, val_losses, meta)
+    print("Saved loss curves to results/plots")
 
-    n_epochs = 20
-
-    for epoch in range(n_epochs):
-        eps_model.train()
-        for flat_visits, B, L in tqdm(dl, desc=f"Epoch {epoch+1}"):
-            flat_visits = [v.to(device) for v in flat_visits]
-
-            # x0 in (hyperbolic tangent or Euclidean) space: [B, L, dim]
-            x0 = build_visit_tensor(visit_enc, flat_visits, B, L, dim, device)
-
-            # sample timesteps
-            t = torch.randint(0, T, (B,), device=device).long()
-            # extract alphas
-            a_bar_t = alphas_cumprod[t].view(B, 1, 1)
-
-            eps = torch.randn_like(x0)
-            x_t = torch.sqrt(a_bar_t) * x0 + torch.sqrt(1 - a_bar_t) * eps
-
-            eps_hat = eps_model(x_t, t)
-
-            loss = torch.mean((eps - eps_hat) ** 2)
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-        print(f"Epoch {epoch+1} loss: {loss.item():.4f}")
+    test_loss = evaluate_loader(
+        test_dl,
+        eps_model,
+        visit_enc,
+        code_emb,
+        hier,
+        alphas_cumprod,
+        T,
+        max_len,
+        dim,
+        device,
+        embeddingType,
+        codes_per_visit,
+        lambda_tree,
+        lambda_radius,
+        depth_targets,
+    )
+    print(f"Test loss: {test_loss:.6f}")
 
     # 5) metrics
-    real_stats = traj_stats(trajs, hier)
-    print("\nReal stats:", real_stats)
+    if real_stats is None:
+        real_stats = traj_stats(trajs, hier)
 
     # sample MANY for evaluation
     num_samples_for_eval = 1000
@@ -214,6 +649,7 @@ def main(embeddingType: str):
         num_samples_for_eval,
         embeddingType,
         device,
+        codes_per_visit,
         print_examples=3,
     )
 
@@ -226,7 +662,24 @@ if __name__ == "__main__":
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    # hyperbolic
-    main(embeddingType="hyperbolic")
-    # euclidean
-    main(embeddingType="euclidean")
+
+    hier = ToyICDHierarchy()
+    all_trajs = sample_toy_trajectories(hier, num_patients=20000)
+    splits = split_trajectories(all_trajs, seed=42)
+    real_stats = traj_stats(all_trajs, hier)
+    print("\nReal stats:", real_stats)
+
+    main(
+        embeddingType="hyperbolic",
+        use_regularization=False,
+        traj_splits=splits,
+        hier=hier,
+        real_stats=real_stats,
+    )
+    main(
+        embeddingType="euclidean",
+        use_regularization=False,
+        traj_splits=splits,
+        hier=hier,
+        real_stats=real_stats,
+    )
