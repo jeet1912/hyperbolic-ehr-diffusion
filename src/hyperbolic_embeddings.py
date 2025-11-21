@@ -20,28 +20,32 @@ class HyperbolicCodeEmbedding(nn.Module):
 
 
 class VisitEncoder(nn.Module):
-    """
-    Map a set of code ids -> tangent-space visit vector.
-    """
-    def __init__(self, code_embedding: HyperbolicCodeEmbedding):
+    def __init__(self, code_embedding: HyperbolicCodeEmbedding, pad_idx: int):
         super().__init__()
         self.code_embedding = code_embedding
         self.manifold = code_embedding.manifold
+        self.pad_idx = pad_idx
 
     def forward(self, code_ids_batch):
         """
         code_ids_batch: list of 1D LongTensors (variable length), len = B*T
         Returns: tensor [B*T, dim] in tangent space at origin.
         """
-        dim = self.code_embedding.emb.shape[-1]
         visit_vecs = []
+        d = self.code_embedding.emb.size(1)
+        device = self.code_embedding.emb.device
+
         for ids in code_ids_batch:
-            valid = ids[ids >= 0]
-            if valid.numel() == 0:
-                visit_vec = torch.zeros(dim, device=ids.device)
-            else:
-                x = self.code_embedding(valid)             # [k, d] on manifold
-                tangents = self.manifold.logmap0(x)        # [k, d] in R^d
-                visit_vec = tangents.mean(dim=0)           # [d]
+            # remove pads
+            ids = ids[ids != self.pad_idx]
+            if ids.numel() == 0:
+                # empty visit -> zero vector in tangent space
+                visit_vecs.append(torch.zeros(d, device=device))
+                continue
+
+            x = self.code_embedding(ids)        # [k, d] on manifold
+            tangents = self.manifold.logmap0(x) # [k, d] in R^d
+            visit_vec = tangents.mean(dim=0)    # [d]
             visit_vecs.append(visit_vec)
+
         return torch.stack(visit_vecs, dim=0)
