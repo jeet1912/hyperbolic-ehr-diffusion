@@ -1,5 +1,6 @@
 import os
 import torch
+import torch.nn as nn
 import numpy as np
 import random
 import copy
@@ -125,6 +126,59 @@ def mean_tree_distance_from_visits(visit_lists, hier):
     if not dists:
         return None
     return float(sum(dists) / len(dists))
+
+
+def code_pair_loss(code_emb, hier, device, num_pairs=512):
+    """
+    Encourage embedding distances to correlate with tree distances.
+    Only uses real codes (excludes pad index).
+    """
+    n_real = len(hier.codes)  # real codes: 0..n_real-1
+
+    # sample random pairs of real codes
+    idx_i = torch.randint(0, n_real, (num_pairs,), device=device)
+    idx_j = torch.randint(0, n_real, (num_pairs,), device=device)
+
+    # slice off pad row if present: emb[:n_real] are real codes
+    emb = code_emb.emb[:n_real]  # [n_real, dim]
+
+    d_hyper_list = []
+    d_tree_list = []
+
+    # we can loop in Python here; num_pairs is small
+    for i, j in zip(idx_i.tolist(), idx_j.tolist()):
+        if i == j:
+            continue
+
+        c1 = hier.idx2code[i]
+        c2 = hier.idx2code[j]
+        d_tree = hier.tree_distance(c1, c2)
+        d_tree_list.append(d_tree)
+
+        # hyperbolic vs euclidean distance
+        if hasattr(code_emb, "manifold"):
+            v1 = emb[i]
+            v2 = emb[j]
+            # manifold.dist expects batched inputs; keep it simple
+            d_h = code_emb.manifold.dist(v1.unsqueeze(0), v2.unsqueeze(0)).squeeze(0)
+        else:
+            d_h = torch.norm(emb[i] - emb[j])
+
+        d_hyper_list.append(d_h)
+
+    if not d_tree_list:
+        # fallback: no pairs (very unlikely)
+        return torch.tensor(0.0, dtype=torch.float32, device=device)
+
+    d_tree = torch.tensor(d_tree_list, dtype=torch.float32, device=device)
+    d_hyper = torch.stack(d_hyper_list).to(device)  # [M]
+
+    # normalize both to zero mean / unit variance
+    d_tree = (d_tree - d_tree.mean()) / (d_tree.std() + 1e-6)
+    d_hyper = (d_hyper - d_hyper.mean()) / (d_hyper.std() + 1e-6)
+
+    # MSE between normalized distances
+    return torch.mean((d_hyper - d_tree) ** 2)
 
 
 
@@ -264,9 +318,10 @@ def compute_batch_loss(
     lambda_tree,
     lambda_radius,
     depth_targets,
-    fake_sample_size=2,
+    fake_sample_size=2,  # unused now, fine to keep for API compatibility
 ):
-    x0 = build_visit_tensor(visit_enc, flat_visits, B, L, dim, device)
+    # 1) Standard DDPM latent loss
+    x0 = build_visit_tensor(visit_enc, flat_visits, B, L, dim, device)  # [B, L, D]
     t = torch.randint(0, T, (B,), device=device).long()
     a_bar_t = alphas_cumprod[t].view(B, 1, 1)
     eps = torch.randn_like(x0)
@@ -274,46 +329,17 @@ def compute_batch_loss(
     eps_hat = eps_model(x_t, t, visit_mask=visit_mask)
     loss = torch.mean((eps - eps_hat) ** 2)
 
+    # 2) Code-pair geometry regularizer (replaces old tree_penalty)
     if lambda_tree > 0.0:
-        max_code_idx = len(hier.codes) - 1
-        real_visit_lists = []
-        for visit in flat_visits:
-            visit_codes = [int(x) for x in visit.tolist()
-                        if 0 <= int(x) <= max_code_idx]
-            real_visit_lists.append(visit_codes)
-        D_tree_real = mean_tree_distance_from_visits(real_visit_lists, hier)
-        fake_indices = sample_fake_visit_indices(
-            eps_model,
-            num_samples=fake_sample_size,
-            max_len=max_len,
-            dim=dim,
-            T=T,
-            alphas_cumprod=alphas_cumprod,
-            code_emb=code_emb,
-            visit_enc=visit_enc,
-            codes_per_visit=codes_per_visit,
-            device=device,
-            embedding_type=embedding_type,
-        )
-        fake_visit_lists = visits_from_indices(fake_indices)
-        D_tree_fake = mean_tree_distance_from_visits(fake_visit_lists, hier)
-        D_tree_real = 0.0 if D_tree_real is None else D_tree_real
-        D_tree_fake = 0.0 if D_tree_fake is None else D_tree_fake
-        tree_penalty = lambda_tree * abs(D_tree_real - D_tree_fake)
-        loss = loss + torch.tensor(tree_penalty, dtype=torch.float32, device=device)
-       
-        if embedding_type == "hyperbolic" and lambda_radius > 0.0:
-            max_depth = max(hier.depth(code) for code in hier.codes)
-            depth_vals = [hier.depth(code) / max_depth for code in hier.codes]
-            depth_targets = torch.tensor(depth_vals, dtype=torch.float32, device=device)
-            # add target for pad index (e.g. 0)
-            depth_targets = torch.cat([
-                depth_targets,
-                torch.zeros(1, device=device)
-            ], dim=0)
-            radius = torch.norm(code_emb.emb, dim=-1)
-            radius_mismatch = torch.mean((radius - depth_targets) ** 2)
-            loss = loss + lambda_radius * radius_mismatch
+        pair_loss = code_pair_loss(code_emb, hier, device=device, num_pairs=512)
+        loss = loss + lambda_tree * pair_loss
+
+    # 3) Radius-depth regularizer for hyperbolic embeddings
+    if embedding_type == "hyperbolic" and depth_targets is not None and lambda_radius > 0.0:
+        # radius over all codes, including pad
+        radius = torch.norm(code_emb.emb, dim=-1)             # [num_codes + 1]
+        radius_mismatch = torch.mean((radius - depth_targets) ** 2)
+        loss = loss + lambda_radius * radius_mismatch
 
     return loss
 
@@ -578,6 +604,44 @@ def save_loss_curves(train_losses, val_losses, meta):
         _plot_single_curve(val_losses, val_title, val_path)
 
 
+def correlation_tree_vs_embedding(code_emb, hier, device, num_pairs=5000):
+    n_real = len(hier.codes)
+    base_emb = code_emb.emb
+    if isinstance(base_emb, nn.Embedding):
+        base_tensor = base_emb.weight
+    else:
+        base_tensor = base_emb
+    emb = base_tensor[:n_real].detach().to(device)  # [N_real, D]
+
+    tree_dists = []
+    embed_dists = []
+
+    idx_i = torch.randint(0, n_real, (num_pairs,), device=device)
+    idx_j = torch.randint(0, n_real, (num_pairs,), device=device)
+
+    for i, j in zip(idx_i.tolist(), idx_j.tolist()):
+        if i == j:
+            continue
+        c1 = hier.idx2code[i]
+        c2 = hier.idx2code[j]
+        dist = hier.tree_distance(c1, c2)
+        if dist is None:
+            continue
+        tree_dists.append(dist)
+
+        if hasattr(code_emb, "manifold"):
+            d = code_emb.manifold.dist(emb[i].unsqueeze(0), emb[j].unsqueeze(0)).item()
+        else:
+            d = torch.norm(emb[i] - emb[j]).item()
+        embed_dists.append(d)
+
+    tree = np.array(tree_dists)
+    embd = np.array(embed_dists)
+    if len(tree) == 0:
+        return 0.0
+    return float(np.corrcoef(tree, embd)[0, 1])
+
+
 def main(
     embeddingType: str,
     use_regularization: bool = True,
@@ -637,7 +701,7 @@ def main(
     )
 
     # 4) model
-    n_layers = 2
+    n_layers = 4
     eps_model = TrajectoryEpsModel(dim=dim, n_layers=n_layers, T_max=T).to(device)
     codes_per_visit = 4
 
@@ -648,11 +712,11 @@ def main(
     depth_targets = None
     if embeddingType == "hyperbolic" and lambda_radius > 0.0:
         max_depth = max(hier.depth(code) for code in hier.codes)
-        depth_targets = torch.tensor(
-            [hier.depth(code) / max_depth for code in hier.codes],
-            dtype=torch.float32,
-            device=device,
-        )
+        depth_vals = [hier.depth(code) / max_depth for code in hier.codes]  # real codes
+        depth_targets = torch.tensor(depth_vals, dtype=torch.float32, device=device)
+        # add one entry for pad index (e.g. target radius = 0)
+        depth_targets = torch.cat([depth_targets, torch.zeros(1, device=device)], dim=0)
+
 
     train_losses, val_losses, best_val = train_model(
         eps_model,
@@ -671,7 +735,7 @@ def main(
         lambda_tree,
         lambda_radius,
         depth_targets,
-        n_epochs=5,
+        n_epochs=10,
     )
     print(f"Best validation loss: {best_val:.6f}")
     meta = {
@@ -724,6 +788,9 @@ def main(
         print_examples=3,
     )
 
+    corr = correlation_tree_vs_embedding(code_emb, hier, device=device, num_pairs=5000)
+    print(f"Correlation(tree_dist, {embeddingType}_embedding_dist) = {corr:.4f}")
+
     syn_stats = traj_stats(synthetic_trajs, hier)
     print(f"\nSynthetic ({embeddingType}) stats (N={num_samples_for_eval}):", syn_stats)
     return syn_stats
@@ -741,15 +808,14 @@ if __name__ == "__main__":
     real_stats = traj_stats(all_trajs, hier)
     print("\nReal stats:", real_stats)
 
-    main(
-        embeddingType="hyperbolic",
-        use_regularization=False,
-        traj_splits=splits,
-        hier=hier,
-    )
-    main(
-        embeddingType="euclidean",
-        use_regularization=False,
-        traj_splits=splits,
-        hier=hier,
-    )
+    # 1) Hyperbolic, no regularization
+    main("hyperbolic", use_regularization=False, traj_splits=splits, hier=hier)
+
+    # 2) Euclidean, no regularization
+    main("euclidean", use_regularization=False, traj_splits=splits, hier=hier)
+
+    # 3) Hyperbolic, with regularization
+    main("hyperbolic", use_regularization=True, traj_splits=splits, hier=hier)
+
+    # 4) Euclidean, with regularization
+    main("euclidean", use_regularization=True, traj_splits=splits, hier=hier)
