@@ -20,9 +20,14 @@ class EuclideanVisitEncoder(nn.Module):
         code_ids_batch: list of 1D LongTensors (variable length), len = B*T
         Returns: tensor [B*T, dim] in Euclidean space.
         """
+        dim = self.code_embedding.emb.weight.shape[-1]
         visit_vecs = []
         for ids in code_ids_batch:
-            x = self.code_embedding(ids)      # [k, d]
-            visit_vec = x.mean(dim=0)         # [d]
+            valid = ids[ids >= 0]
+            if valid.numel() == 0:
+                visit_vec = torch.zeros(dim, device=ids.device)
+            else:
+                x = self.code_embedding(valid)      # [k, d]
+                visit_vec = x.mean(dim=0)           # [d]
             visit_vecs.append(visit_vec)
         return torch.stack(visit_vecs, dim=0)

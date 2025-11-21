@@ -1,10 +1,12 @@
 import torch
-import torch.nn as nn
+import numpy as np
+import random
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 from data_icd_toy import ToyICDHierarchy, sample_toy_trajectories
 from hyperbolic_embeddings import HyperbolicCodeEmbedding, VisitEncoder
+from euclidean_embeddings import EuclideanCodeEmbedding, EuclideanVisitEncoder
 from diffusion import cosine_beta_schedule
 from traj_model import TrajectoryEpsModel
 from metrics_toy import traj_stats
@@ -42,7 +44,7 @@ def collate_fn(batch):
     return flat_visits, B, L
 
 
-def build_visit_tensor(visit_enc: VisitEncoder, flat_visits, B, L, dim, device):
+def build_visit_tensor(visit_enc, flat_visits, B, L, dim, device):
     visit_enc.eval()
     with torch.no_grad():
         visit_vecs = visit_enc(flat_visits).to(device)  # [B*L, dim]
@@ -50,7 +52,7 @@ def build_visit_tensor(visit_enc: VisitEncoder, flat_visits, B, L, dim, device):
     return x0
 
 
-def main():
+def main(embeddingType: str):
     device = torch.device("cpu")
 
     # 1) data
@@ -60,21 +62,29 @@ def main():
     ds = TrajDataset(trajs, max_len=max_len)
     dl = DataLoader(ds, batch_size=64, shuffle=True, collate_fn=collate_fn)
 
-    # 2) hyperbolic embeddings + visit encoder
+    # 2) embeddings + visit encoder
     dim = 16
-    code_emb = HyperbolicCodeEmbedding(num_codes=len(hier.codes), dim=dim).to(device)
-    visit_enc = VisitEncoder(code_emb).to(device)
+    if embeddingType == "euclidean":
+        code_emb = EuclideanCodeEmbedding(num_codes=len(hier.codes), dim=dim).to(device)
+        visit_enc = EuclideanVisitEncoder(code_emb).to(device)
+    else:
+        code_emb = HyperbolicCodeEmbedding(num_codes=len(hier.codes), dim=dim).to(device)
+        visit_enc = VisitEncoder(code_emb).to(device)
 
     # 3) diffusion params
     T = 1000
     betas = cosine_beta_schedule(T).to(device)
     alphas = 1.0 - betas
     alphas_cumprod = torch.cumprod(alphas, dim=0)
-    alphas_cumprod_prev = torch.cat([torch.tensor([1.0], device=device), alphas_cumprod[:-1]], dim=0)
+    alphas_cumprod_prev = torch.cat(
+        [torch.tensor([1.0], device=device), alphas_cumprod[:-1]], dim=0
+    )
 
     # 4) model
     eps_model = TrajectoryEpsModel(dim=dim, T_max=T).to(device)
-    optimizer = torch.optim.Adam(list(eps_model.parameters()) + list(code_emb.parameters()), lr=2e-4)
+    optimizer = torch.optim.Adam(
+        list(eps_model.parameters()) + list(code_emb.parameters()), lr=2e-4
+    )
 
     n_epochs = 5
 
@@ -83,7 +93,7 @@ def main():
         for flat_visits, B, L in tqdm(dl, desc=f"Epoch {epoch+1}"):
             flat_visits = [v.to(device) for v in flat_visits]
 
-            # x0 in tangent space: [B, L, dim]
+            # x0 in (hyperbolic tangent or Euclidean) space: [B, L, dim]
             x0 = build_visit_tensor(visit_enc, flat_visits, B, L, dim, device)
 
             # sample timesteps
@@ -104,11 +114,12 @@ def main():
 
         print(f"Epoch {epoch+1} loss: {loss.item():.4f}")
 
+    # 5) diffusion sampling
     synthetic_trajs = []
-    # diffusion sampling
     eps_model.eval()
     visit_enc.eval()
     num_samples = 3
+
     with torch.no_grad():
         x_t = torch.randn(num_samples, max_len, dim, device=device)
         for timestep in reversed(range(T)):
@@ -130,17 +141,28 @@ def main():
             else:
                 x_t = mean
 
-        sampled_visits = x_t  # approximated x_0
+        sampled_visits = x_t  # approx x_0, shape [num_samples, max_len, dim]
+        visit_vecs = sampled_visits.view(num_samples * max_len, dim)  # [B*L, dim]
 
-        # decode visits by nearest hyperbolic code embeddings in tangent space
-        code_tangent = visit_enc.manifold.logmap0(code_emb.emb)
-        visit_vecs = sampled_visits.view(num_samples * max_len, dim)
-        sims = visit_vecs @ code_tangent.t()
         codes_per_visit = 4
-        topk_idx = sims.topk(k=codes_per_visit, dim=-1).indices.cpu().tolist()
 
+        if embeddingType == "hyperbolic":
+            # decode in hyperbolic: map code embeddings to tangent space, then NN
+            code_tangent = visit_enc.manifold.logmap0(code_emb.emb)  # [N, dim]
+            sims = visit_vecs @ code_tangent.t()                     # [B*L, N]
+            topk_idx = sims.topk(k=codes_per_visit, dim=-1).indices.cpu().tolist()
+        else:
+            # Euclidean: plain NN search in embedding space
+            code_matrix = code_emb.emb.weight                        # [N, dim]
+            # negative squared L2 distance as similarity
+            diff = visit_vecs.unsqueeze(1) - code_matrix.unsqueeze(0)  # [B*L, N, dim]
+            dists_sq = (diff ** 2).sum(-1)                             # [B*L, N]
+            sims = -dists_sq
+            topk_idx = sims.topk(k=codes_per_visit, dim=-1).indices.cpu().tolist()
+
+    # turn flat visits into trajectories and print
     for sample_idx in range(num_samples):
-        print(f"\nSample trajectory {sample_idx + 1}:")
+        print(f"\nSample trajectory ({embeddingType}) {sample_idx + 1}:")
         traj_visits = []
         for visit_idx in range(max_len):
             flat_idx = sample_idx * max_len + visit_idx
@@ -150,10 +172,20 @@ def main():
             print(f"  Visit {visit_idx + 1}: {code_names}")
         synthetic_trajs.append(traj_visits)
 
+    # 6) metrics
     real_stats = traj_stats(trajs, hier)
     syn_stats = traj_stats(synthetic_trajs, hier)
+
     print("\nReal stats:", real_stats)
-    print("Synthetic (hyperbolic) stats:", syn_stats)
+    print(f"Synthetic ({embeddingType}) stats:", syn_stats)
+
 
 if __name__ == "__main__":
-    main()
+    seed = 42
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    # hyperbolic
+    main(embeddingType="hyperbolic")
+    # euclidean
+    main(embeddingType="euclidean")

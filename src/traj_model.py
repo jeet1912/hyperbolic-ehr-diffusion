@@ -18,7 +18,7 @@ class TrajectoryEpsModel(nn.Module):
         x_t: [B, L, dim] (L = max trajectory length)
         t:   [B] timesteps
         """
-        B, L, D = x_t.shape
+        B, L, _ = x_t.shape
         t_emb = self.time_mlp(t)             # [B, dim]
         t_expanded = t_emb.unsqueeze(1).expand(-1, L, -1)
         h = x_t + t_expanded
