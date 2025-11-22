@@ -351,6 +351,58 @@ def compute_batch_loss(
     return loss
 
 
+def compute_batch_accuracy(
+    flat_visits,
+    B,
+    L,
+    visit_mask,
+    eps_model,
+    visit_enc,
+    code_emb,
+    alphas_cumprod,
+    T,
+    max_len,
+    dim,
+    device,
+    embedding_type,
+    codes_per_visit,
+    pad_idx,
+):
+    visit_enc.eval()
+    with torch.no_grad():
+        x0 = build_visit_tensor(visit_enc, flat_visits, B, L, dim, device)
+        t = torch.randint(0, T, (B,), device=device).long()
+        a_bar_t = alphas_cumprod[t].view(B, 1, 1)
+        eps = torch.randn_like(x0)
+        x_t = torch.sqrt(a_bar_t) * x0 + torch.sqrt(1 - a_bar_t) * eps
+        eps_hat = eps_model(x_t, t, visit_mask=visit_mask)
+        x0_pred = (x_t - torch.sqrt(1 - a_bar_t) * eps_hat) / torch.sqrt(a_bar_t)
+
+    decoded_idx = decode_visit_vectors(
+        x0_pred, code_emb, visit_enc, embedding_type, codes_per_visit
+    )
+    decoded_idx = decoded_idx.view(B * L, codes_per_visit)
+
+    visit_mask_flat = visit_mask.view(-1).cpu()
+    total = 0
+    correct = 0
+
+    for visit_tensor, mask_value, preds in zip(flat_visits, visit_mask_flat, decoded_idx):
+        if not bool(mask_value.item()):
+            continue
+        visit_codes = visit_tensor.detach().cpu().tolist()
+        true_codes = [int(c) for c in visit_codes if int(c) != pad_idx]
+        if not true_codes:
+            continue
+        pred_set = set(int(c) for c in preds.tolist())
+        for code in true_codes:
+            if code in pred_set:
+                correct += 1
+        total += len(true_codes)
+
+    return correct, total
+
+
 def run_epoch(
     loader,
     eps_model,
@@ -502,14 +554,14 @@ def train_model(
 
         scheduler.step(val_loss)
 
-        train_losses.append(train_loss)
-        val_losses.append(val_loss)
+        # train_losses.append(train_loss)
+        # val_losses.append(val_loss)
 
-        print(
-            f"Epoch {epoch}/{n_epochs}, "
-            f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}, "
-            f"lambda_tree_eff={lambda_tree_eff:.4f}, lambda_radius_eff={lambda_radius_eff:.4f}"
-        )
+        # print(
+        #     f"Epoch {epoch}/{n_epochs}, "
+        #     f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}, "
+        #     f"lambda_tree_eff={lambda_tree_eff:.4f}, lambda_radius_eff={lambda_radius_eff:.4f}"
+        # )
 
         if val_loss < best_val:
             best_val = val_loss
@@ -570,6 +622,52 @@ def evaluate_loader(
             total_loss += loss.item() * B
             total_samples += B
     return total_loss / max(total_samples, 1)
+
+
+def evaluate_test_accuracy(
+    loader,
+    eps_model,
+    visit_enc,
+    code_emb,
+    alphas_cumprod,
+    T,
+    max_len,
+    dim,
+    device,
+    embedding_type,
+    codes_per_visit,
+    pad_idx,
+):
+    eps_model.eval()
+    visit_enc.eval()
+    with torch.no_grad():
+        total_correct = 0
+        total_items = 0
+        for flat_visits, B, L, visit_mask in loader:
+            flat_visits = [v.to(device) for v in flat_visits]
+            visit_mask = visit_mask.to(device)
+            correct, total = compute_batch_accuracy(
+                flat_visits,
+                B,
+                L,
+                visit_mask,
+                eps_model,
+                visit_enc,
+                code_emb,
+                alphas_cumprod,
+                T,
+                max_len,
+                dim,
+                device,
+                embedding_type,
+                codes_per_visit,
+                pad_idx,
+            )
+            total_correct += correct
+            total_items += total
+    if total_items == 0:
+        return 0.0
+    return float(total_correct) / float(total_items)
 
 
 def _format_float_for_name(val):
@@ -751,27 +849,25 @@ def main(
         depth_targets,
         n_epochs=10,
     )
-    print(f"Best validation loss: {best_val:.6f}")
-    meta = {
-        "embedding": embeddingType,
-        "dim": dim,
-        "layers": n_layers,
-        "T": T,
-        "use_reg": use_regularization,
-        "lambda_tree": lambda_tree,
-        "lambda_radius": lambda_radius,
-        "hier_depth": getattr(hier, "max_depth", None),
-        "experiment": experiment_name,
-    }
-    save_loss_curves(train_losses, val_losses, meta)
-    print("Saved loss curves to results/plots")
-
-    test_loss = evaluate_loader(
+    # print(f"Best validation loss: {best_val:.6f}")
+    # meta = {
+    #     "embedding": embeddingType,
+    #     "dim": dim,
+    #     "layers": n_layers,
+    #     "T": T,
+    #     "use_reg": use_regularization,
+    #     "lambda_tree": lambda_tree,
+    #     "lambda_radius": lambda_radius,
+    #     "hier_depth": getattr(hier, "max_depth", None),
+    #     "experiment": experiment_name,
+    # }
+    # save_loss_curves(train_losses, val_losses, meta)
+    # print("Saved loss curves to results/plots")
+    test_accuracy = evaluate_test_accuracy(
         test_dl,
         eps_model,
         visit_enc,
         code_emb,
-        hier,
         alphas_cumprod,
         T,
         max_len,
@@ -779,37 +875,34 @@ def main(
         device,
         embeddingType,
         codes_per_visit,
-        lambda_tree,
-        lambda_radius,
-        depth_targets,
+        pad_idx,
     )
-    print(f"Test loss: {test_loss:.6f}")
+    print(f"Test accuracy: {test_accuracy:.4f}")
+    # num_samples_for_eval = 1000
+    # synthetic_trajs = sample_trajectories(
+    #     eps_model,
+    #     code_emb,
+    #     visit_enc,
+    #     hier,
+    #     alphas,
+    #     betas,
+    #     alphas_cumprod,
+    #     alphas_cumprod_prev,
+    #     max_len,
+    #     dim,
+    #     num_samples_for_eval,
+    #     embeddingType,
+    #     device,
+    #     codes_per_visit,
+    #     print_examples=3,
+    # )
 
-    num_samples_for_eval = 1000
-    synthetic_trajs = sample_trajectories(
-        eps_model,
-        code_emb,
-        visit_enc,
-        hier,
-        alphas,
-        betas,
-        alphas_cumprod,
-        alphas_cumprod_prev,
-        max_len,
-        dim,
-        num_samples_for_eval,
-        embeddingType,
-        device,
-        codes_per_visit,
-        print_examples=3,
-    )
+    # corr = correlation_tree_vs_embedding(code_emb, hier, device=device, num_pairs=5000)
+    # print(f"Correlation(tree_dist, {embeddingType}_embedding_dist) = {corr:.4f}")
 
-    corr = correlation_tree_vs_embedding(code_emb, hier, device=device, num_pairs=5000)
-    print(f"Correlation(tree_dist, {embeddingType}_embedding_dist) = {corr:.4f}")
-
-    syn_stats = traj_stats(synthetic_trajs, hier)
-    print(f"\nSynthetic ({embeddingType}) stats (N={num_samples_for_eval}):", syn_stats)
-    return syn_stats
+    # syn_stats = traj_stats(synthetic_trajs, hier)
+    # print(f"\nSynthetic ({embeddingType}) stats (N={num_samples_for_eval}):", syn_stats)
+    return test_accuracy
 
 
 if __name__ == "__main__":

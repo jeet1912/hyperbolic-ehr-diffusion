@@ -185,8 +185,11 @@ Correlation-inspired regularizer:
 3. Compute embedding distance \(d_{\text{emb}}(i,j)\): hyperbolic geodesic or Euclidean norm.
 4. Normalize both via z-score, minimize MSE:
    \[
+   \hat{d}_{\text{tree}} = \frac{d_{\text{tree}} - \mu_t}{\sigma_t},\quad
+   \hat{d}_{\text{emb}} = \frac{d_{\text{emb}} - \mu_e}{\sigma_e},\quad
    \mathcal{L}_{\text{pair}} = \| \hat{d}_{\text{emb}} - \hat{d}_{\text{tree}} \|_2^2
    \]
+   aligning manifold distances with the discrete hierarchy metric.
 
 #### `sample_fake_visit_indices`
 
@@ -226,6 +229,14 @@ Main training objective:
 5. Optionally add `code_pair_loss` term and radius-depth penalty
    \(\mathcal{L}_{\text{radius}} = \frac{1}{N}\sum (||z_i|| - d_i)^2\) for hyperbolic embeddings.
 
+Total loss:
+\[
+\mathcal{L} = \underbrace{\mathbb{E}\big[\|\epsilon - \hat{\epsilon}(x_t,t)\|_2^2\big]}_{\mathcal{L}_{\text{DDPM}}}
+ + \lambda_{\text{tree}}\,\mathcal{L}_{\text{pair}}
+ + \lambda_{\text{radius}}\,\mathcal{L}_{\text{radius}}
+\]
+with \(\lambda_{\text{tree}},\lambda_{\text{radius}}\) linearly warmed up over early epochs.
+
 #### `run_epoch`
 
 Iterates over loader, computes loss, applies optimizer steps when provided. Returns mean loss.
@@ -259,7 +270,11 @@ Saves training/validation loss PNGs with metadata tags.
 
 #### `correlation_tree_vs_embedding`
 
-Monte Carlo correlation estimate between tree distances and embedding distances.
+Monte Carlo Pearson correlation between tree distances and embedding distances. For sampled pairs \((i,j)\):
+\[
+\text{corr} = \frac{\text{Cov}(d_{\text{tree}}, d_{\text{emb}})}{\sigma(d_{\text{tree}})\,\sigma(d_{\text{emb}})}
+\]
+where \(d_{\text{emb}}\) uses hyperbolic geodesic length or Euclidean norm. High correlation indicates the embedding geometry preserves the ontology structure.
 
 #### `main`
 
@@ -284,3 +299,9 @@ Latent diffusion process:
 1. \(x_0\): visit representations.
 2. Forward noising: \(q(x_t | x_0) = \mathcal{N}(\sqrt{\bar{\alpha}_t} x_0, (1-\bar{\alpha}_t) I)\).
 3. Reverse model approximates \(p_\theta(x_{t-1}|x_t)\) by predicting \(\hat{\epsilon}_t\) and using DDPM update.
+
+## Narrative Summary
+
+We frame the system as a generative model over visit representations: the DDPM learns to push random noise toward clean visit vectors in latent space. The foundation is a geometry-aware embedding space for codes, where hyperbolic embeddings combined with the tree regularizer force the code manifold to mirror the ICD hierarchy. Decoding remains heuristic: latent visit vectors yield discrete codes by taking the top-K nearest neighbors (log-map plus dot product on the hyperbolic setup).
+
+With these ingredients, we can sample trajectories: the trained diffusion model produces sequences of latent visit vectors, which are then decoded into ICD codes. Yet the crucial limitation is structural. The pipeline does **not** establish a reversible path from ICD codes → latent visit vectors → ICD codes. Instead, real visits are encoded via simple mean pooling; the DDPM denoises those pooled vectors; and decoding relies on a nearest-neighbor lookup. No part of this is an end-to-end autoencoder, so the system never learns to reconstruct discrete visits in the latent space. The DDPM emits continuous vectors only, expecting a downstream lookup to convert them into codes. Consequently, Step 3 genuinely learns to synthesize visit vectors, not actual medical visits, and the decoding procedure is approximate, untrained, and inherently lossy.
