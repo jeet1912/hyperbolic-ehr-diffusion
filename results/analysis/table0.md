@@ -1,7 +1,7 @@
 
 ### Experiment depth2_base | depth 2 | hyperbolic | regularization=off 
-![Hyperbolic train loss (depth2, reg off)](../plots/table0/depth2_base_depth2_hyperbolic_dim16_layers4_T1000_regoff_lt0_lr0_train.png)
-![Hyperbolic val loss (depth2, reg off)](../plots/table0/depth2_base_depth2_hyperbolic_dim16_layers4_T1000_regoff_lt0_lr0_val.png)
+![Hyperbolic train loss (depth2, reg off)](../plots/forTable0/depth2_base_depth2_hyperbolic_dim16_layers4_T1000_regoff_lt0_lr0_train.png)
+![Hyperbolic val loss (depth2, reg off)](../plots/forTable0/depth2_base_depth2_hyperbolic_dim16_layers4_T1000_regoff_lt0_lr0_val.png)
 
 Best validation loss: 0.332425
 Test loss: 0.326676
@@ -34,8 +34,8 @@ Correlation(tree_dist, hyperbolic_embedding_dist) = -0.0031
 
 
 ### Experiment depth2_base | depth 2 | euclidean | regularization=off 
-![Euclidean train loss (depth2, reg off)](../plots/table0/depth2_base_depth2_euclidean_dim16_layers4_T1000_regoff_lt0_lr0_train.png)
-![Euclidean val loss (depth2, reg off)](../plots/table0/depth2_base_depth2_euclidean_dim16_layers4_T1000_regoff_lt0_lr0_val.png)
+![Euclidean train loss (depth2, reg off)](../plots/forTable0/depth2_base_depth2_euclidean_dim16_layers4_T1000_regoff_lt0_lr0_train.png)
+![Euclidean val loss (depth2, reg off)](../plots/forTable0/depth2_base_depth2_euclidean_dim16_layers4_T1000_regoff_lt0_lr0_val.png)
 
 Best validation loss: 0.623683
 Test loss: 0.618369
@@ -68,8 +68,8 @@ Correlation(tree_dist, euclidean_embedding_dist) = 0.0515
 
 
 ### Experiment depth2_base | depth 2 | hyperbolic | regularization=on 
-![Hyperbolic train loss (depth2, reg on)](../plots/table0/depth2_base_depth2_hyperbolic_dim16_layers4_T1000_regon_lt0p01_lr0p003_train.png)
-![Hyperbolic val loss (depth2, reg on)](../plots/table0/depth2_base_depth2_hyperbolic_dim16_layers4_T1000_regon_lt0p01_lr0p003_val.png)
+![Hyperbolic train loss (depth2, reg on)](../plots/forTable0/depth2_base_depth2_hyperbolic_dim16_layers4_T1000_regon_lt0p01_lr0p003_train.png)
+![Hyperbolic val loss (depth2, reg on)](../plots/forTable0/depth2_base_depth2_hyperbolic_dim16_layers4_T1000_regon_lt0p01_lr0p003_val.png)
 
 Best validation loss: 0.377999
 Test loss: 0.376347
@@ -102,8 +102,8 @@ Correlation(tree_dist, hyperbolic_embedding_dist) = 0.9868
 
 
 ### Experiment depth2_base | depth 2 | euclidean | regularization=on 
-![Euclidean train loss (depth2, reg on)](../plots/table0/depth2_base_depth2_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_train.png)
-![Euclidean val loss (depth2, reg on)](../plots/table0/depth2_base_depth2_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_val.png)
+![Euclidean train loss (depth2, reg on)](../plots/forTable0/depth2_base_depth2_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_train.png)
+![Euclidean val loss (depth2, reg on)](../plots/forTable0/depth2_base_depth2_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_val.png)
 
 Best validation loss: 0.635257
 Test loss: 0.655352
@@ -136,8 +136,8 @@ Correlation(tree_dist, euclidean_embedding_dist) = 0.3726
 
 
 ### Experiment depth7_extended | depth 7 | hyperbolic | regularization=off 
-![Hyperbolic train loss (depth7, reg off)](../plots/table0/depth7_extended_depth7_hyperbolic_dim16_layers4_T1000_regoff_lt0_lr0_train.png)
-![Hyperbolic val loss (depth7, reg off)](../plots/table0/depth7_extended_depth7_hyperbolic_dim16_layers4_T1000_regoff_lt0_lr0_val.png)
+![Hyperbolic train loss (depth7, reg off)](../plots/forTable0/depth7_extended_depth7_hyperbolic_dim16_layers4_T1000_regoff_lt0_lr0_train.png)
+![Hyperbolic val loss (depth7, reg off)](../plots/forTable0/depth7_extended_depth7_hyperbolic_dim16_layers4_T1000_regoff_lt0_lr0_val.png)
 
 Best validation loss: 0.326480
 Test loss: 0.330172
@@ -170,8 +170,8 @@ Correlation(tree_dist, hyperbolic_embedding_dist) = 0.0509
 
 
 ### Experiment depth7_extended | depth 7 | euclidean | regularization=off 
-![Euclidean train loss (depth7, reg off)](../plots/table0/depth7_extended_depth7_euclidean_dim16_layers4_T1000_regoff_lt0_lr0_train.png)
-![Euclidean val loss (depth7, reg off)](../plots/table0/depth7_extended_depth7_euclidean_dim16_layers4_T1000_regoff_lt0_lr0_val.png)
+![Euclidean train loss (depth7, reg off)](../plots/forTable0/depth7_extended_depth7_euclidean_dim16_layers4_T1000_regoff_lt0_lr0_train.png)
+![Euclidean val loss (depth7, reg off)](../plots/forTable0/depth7_extended_depth7_euclidean_dim16_layers4_T1000_regoff_lt0_lr0_val.png)
 
 Best validation loss: 0.633295
 Test loss: 0.635111
@@ -204,8 +204,8 @@ Correlation(tree_dist, euclidean_embedding_dist) = -0.0043
 
 
 ### Experiment depth7_extended | depth 7 | hyperbolic | regularization=on 
-![Hyperbolic train loss (depth7, reg on)](../plots/table0/depth7_extended_depth7_hyperbolic_dim16_layers4_T1000_regon_lt0p01_lr0p003_train.png)
-![Hyperbolic val loss (depth7, reg on)](../plots/table0/depth7_extended_depth7_hyperbolic_dim16_layers4_T1000_regon_lt0p01_lr0p003_val.png)
+![Hyperbolic train loss (depth7, reg on)](../plots/forTable0/depth7_extended_depth7_hyperbolic_dim16_layers4_T1000_regon_lt0p01_lr0p003_train.png)
+![Hyperbolic val loss (depth7, reg on)](../plots/forTable0/depth7_extended_depth7_hyperbolic_dim16_layers4_T1000_regon_lt0p01_lr0p003_val.png)
 
 Best validation loss: 0.370899
 Test loss: 0.381992
@@ -238,8 +238,8 @@ Correlation(tree_dist, hyperbolic_embedding_dist) = 0.9704
 
 
 ### Experiment depth7_extended | depth 7 | euclidean | regularization=on 
-![Euclidean train loss (depth7, reg on)](../plots/table0/depth7_extended_depth7_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_train.png)
-![Euclidean val loss (depth7, reg on)](../plots/table0/depth7_extended_depth7_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_val.png)
+![Euclidean train loss (depth7, reg on)](../plots/forTable0/depth7_extended_depth7_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_train.png)
+![Euclidean val loss (depth7, reg on)](../plots/forTable0/depth7_extended_depth7_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_val.png)
 
 Best validation loss: 0.648082
 Test loss: 0.646227

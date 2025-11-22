@@ -229,13 +229,16 @@ Main training objective:
 5. Optionally add `code_pair_loss` term and radius-depth penalty
    \(\mathcal{L}_{\text{radius}} = \frac{1}{N}\sum (||z_i|| - d_i)^2\) for hyperbolic embeddings.
 
+
 Total loss:
 \[
-\mathcal{L} = \underbrace{\mathbb{E}\big[\|\epsilon - \hat{\epsilon}(x_t,t)\|_2^2\big]}_{\mathcal{L}_{\text{DDPM}}}
- + \lambda_{\text{tree}}\,\mathcal{L}_{\text{pair}}
- + \lambda_{\text{radius}}\,\mathcal{L}_{\text{radius}}
+\mathcal{L} = \mathbb{E}\big[\|\epsilon - \hat{\epsilon}(x_t, t)\|_2^2\big]
++ \lambda_{\text{tree}}\,\mathcal{L}_{\text{pair}}
++ \lambda_{\text{radius}}\,\mathcal{L}_{\text{radius}},
 \]
-with \(\lambda_{\text{tree}},\lambda_{\text{radius}}\) linearly warmed up over early epochs.
+with \(\lambda_{\text{tree}}\) and \(\lambda_{\text{radius}}\) linearly warmed up over the initial epochs.
+
+
 
 #### `run_epoch`
 
