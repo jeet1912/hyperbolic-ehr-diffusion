@@ -191,6 +191,52 @@ def code_pair_loss(code_emb, hier, device, num_pairs=512):
     return torch.mean((d_hyper - d_tree) ** 2)
 
 
+def _is_hyperbolic(embedding_type: str) -> bool:
+    return embedding_type is not None and embedding_type.lower() == "hyperbolic"
+
+
+def _mobius_scalar_mul_batch(manifold, coeffs, points):
+    """Apply Möbius scalar multiplication per batch element."""
+    B = points.shape[0]
+    out = []
+    if coeffs.dim() == 0:
+        coeffs = coeffs.view(1)
+    elif coeffs.dim() == 1:
+        coeffs = coeffs
+    else:
+        coeffs = coeffs.view(B, -1)[:, 0]
+    if coeffs.numel() == 1 and B > 1:
+        coeffs = coeffs.repeat(B)
+    coeffs = coeffs.to(points.device, points.dtype)
+    for i in range(B):
+        c = coeffs[i]
+        out.append(manifold.mobius_scalar_mul(c, points[i]))
+    return torch.stack(out, dim=0)
+
+
+def _mobius_add_batch(manifold, x, y):
+    return torch.stack([manifold.mobius_add(x[i], y[i]) for i in range(x.shape[0])], dim=0)
+
+
+def _hyperbolic_forward_noise(manifold, x0, eps, sqrt_a, sqrt_one_minus_a):
+    x0_man = manifold.expmap0(x0)
+    eps_man = manifold.expmap0(eps)
+    x0_scaled = _mobius_scalar_mul_batch(manifold, sqrt_a.view(-1), x0_man)
+    noise_scaled = _mobius_scalar_mul_batch(manifold, sqrt_one_minus_a.view(-1), eps_man)
+    x_t_man = _mobius_add_batch(manifold, x0_scaled, noise_scaled)
+    return manifold.logmap0(x_t_man)
+
+
+def _hyperbolic_remove_noise(manifold, x_t, eps_hat, sqrt_a, sqrt_one_minus_a):
+    x_t_man = manifold.expmap0(x_t)
+    eps_man = manifold.expmap0(eps_hat)
+    noise_scaled = _mobius_scalar_mul_batch(manifold, sqrt_one_minus_a.view(-1), eps_man)
+    diff = _mobius_add_batch(manifold, x_t_man, -noise_scaled)
+    inv_scale = (1.0 / (sqrt_a + 1e-8)).view(-1)
+    x0_man = _mobius_scalar_mul_batch(manifold, inv_scale, diff)
+    return manifold.logmap0(x0_man)
+
+
 class VisitDecoder(nn.Module):
     """
     Shared Euclidean decoder for both hyperbolic and Euclidean setups.
@@ -250,6 +296,8 @@ def sample_fake_visit_indices(
     was_training = eps_model.training
     eps_model.eval()
     with torch.no_grad():
+        use_hyp = _is_hyperbolic(embedding_type)
+        manifold = getattr(visit_enc, "manifold", None) if use_hyp else None
         x_t = torch.randn(num_samples, max_len, dim, device=device)
         t = torch.randint(0, T, (num_samples,), device=device)
         a_bar_t = alphas_cumprod[t].view(num_samples, 1, 1)
@@ -258,7 +306,12 @@ def sample_fake_visit_indices(
         visit_mask = torch.ones(num_samples, max_len, dtype=torch.bool, device=device)
 
         eps_hat = eps_model(x_t, t, visit_mask=visit_mask)
-        x0_pred = (x_t - torch.sqrt(1 - a_bar_t) * eps_hat) / torch.sqrt(a_bar_t)
+        sqrt_a = torch.sqrt(a_bar_t)
+        sqrt_one_minus = torch.sqrt(1 - a_bar_t)
+        if use_hyp and manifold is not None:
+            x0_pred = _hyperbolic_remove_noise(manifold, x_t, eps_hat, sqrt_a, sqrt_one_minus)
+        else:
+            x0_pred = (x_t - sqrt_one_minus * eps_hat) / sqrt_a
 
         # decode via VisitDecoder
         logits = visit_dec(x0_pred)  # [num_samples, max_len, num_codes_real]
@@ -291,6 +344,8 @@ def sample_trajectories(
     visit_enc.eval()
     visit_dec.eval()
     synthetic_trajs = []
+    use_hyperbolic = _is_hyperbolic(embeddingType)
+    manifold = getattr(visit_enc, "manifold", None) if use_hyperbolic else None
 
     with torch.no_grad():
         x_t = torch.randn(num_samples, max_len, dim, device=device)
@@ -301,20 +356,33 @@ def sample_trajectories(
             t_batch = torch.full((num_samples,), timestep, dtype=torch.long, device=device)
             eps_hat = eps_model(x_t, t_batch, visit_mask=visit_mask)
 
-            alpha = alphas[timestep]
             alpha_bar = alphas_cumprod[timestep]
-            alpha_bar_prev = alphas_cumprod_prev[timestep]
-            beta = betas[timestep]
+            sqrt_alpha_bar = torch.sqrt(alpha_bar).view(1, 1, 1).repeat(num_samples, 1, 1)
+            sqrt_one_minus = torch.sqrt(1 - alpha_bar).view(1, 1, 1).repeat(num_samples, 1, 1)
 
-            coeff = (1 - alpha) / torch.sqrt(1 - alpha_bar)
-            mean = (x_t - coeff * eps_hat) / torch.sqrt(alpha)
+            if use_hyperbolic and manifold is not None:
+                x0_est = _hyperbolic_remove_noise(manifold, x_t, eps_hat, sqrt_alpha_bar, sqrt_one_minus)
+            else:
+                x0_est = (x_t - sqrt_one_minus * eps_hat) / sqrt_alpha_bar
 
             if timestep > 0:
-                posterior_var = beta * (1 - alpha_bar_prev) / (1 - alpha_bar)
                 noise = torch.randn_like(x_t)
-                x_t = mean + torch.sqrt(posterior_var) * noise
+                alpha_bar_prev = alphas_cumprod_prev[timestep]
+                sqrt_alpha_prev = torch.sqrt(alpha_bar_prev).view(1, 1, 1).repeat(num_samples, 1, 1)
+                sqrt_one_minus_prev = torch.sqrt(1 - alpha_bar_prev).view(1, 1, 1).repeat(num_samples, 1, 1)
+
+                if use_hyperbolic and manifold is not None:
+                    x_t = _hyperbolic_forward_noise(
+                        manifold,
+                        x0_est,
+                        noise,
+                        sqrt_alpha_prev,
+                        sqrt_one_minus_prev,
+                    )
+                else:
+                    x_t = sqrt_alpha_prev * x0_est + sqrt_one_minus_prev * noise
             else:
-                x_t = mean
+                x_t = x0_est
 
         sampled_visits = x_t  # approx x0: [num_samples, max_len, dim]
 
@@ -393,7 +461,14 @@ def compute_batch_loss(
     t = torch.randint(0, T, (B,), device=device).long()
     a_bar_t = alphas_cumprod[t].view(B, 1, 1)
     eps = torch.randn_like(x0)
-    x_t = torch.sqrt(a_bar_t) * x0 + torch.sqrt(1 - a_bar_t) * eps
+    use_hyperbolic = _is_hyperbolic(embedding_type)
+    manifold = getattr(visit_enc, "manifold", None) if use_hyperbolic else None
+    if use_hyperbolic and manifold is not None:
+        sqrt_a = torch.sqrt(a_bar_t)
+        sqrt_one_minus = torch.sqrt(1 - a_bar_t)
+        x_t = _hyperbolic_forward_noise(manifold, x0, eps, sqrt_a, sqrt_one_minus)
+    else:
+        x_t = torch.sqrt(a_bar_t) * x0 + torch.sqrt(1 - a_bar_t) * eps
     eps_hat = eps_model(x_t, t, visit_mask=visit_mask)
     loss = torch.mean((eps - eps_hat) ** 2)
 
@@ -403,7 +478,7 @@ def compute_batch_loss(
         loss = loss + lambda_tree * pair_loss
 
     # 3) Radius-depth regularizer for hyperbolic embeddings
-    if embedding_type == "hyperbolic" and depth_targets is not None and lambda_radius > 0.0:
+    if use_hyperbolic and depth_targets is not None and lambda_radius > 0.0:
         # radius over all codes, including pad
         base_emb = code_emb.emb
         if isinstance(base_emb, nn.Embedding):
@@ -470,14 +545,26 @@ def compute_batch_accuracy(
     """
     visit_enc.eval()
     visit_dec.eval()
+    use_hyperbolic = _is_hyperbolic(embedding_type)
+    manifold = getattr(visit_enc, "manifold", None) if use_hyperbolic else None
     with torch.no_grad():
         x0 = build_visit_tensor(visit_enc, flat_visits, B, L, dim, device)
         t = torch.randint(0, T, (B,), device=device).long()
         a_bar_t = alphas_cumprod[t].view(B, 1, 1)
         eps = torch.randn_like(x0)
-        x_t = torch.sqrt(a_bar_t) * x0 + torch.sqrt(1 - a_bar_t) * eps
+        if use_hyperbolic and manifold is not None:
+            sqrt_a = torch.sqrt(a_bar_t)
+            sqrt_one_minus = torch.sqrt(1 - a_bar_t)
+            x_t = _hyperbolic_forward_noise(manifold, x0, eps, sqrt_a, sqrt_one_minus)
+        else:
+            sqrt_a = torch.sqrt(a_bar_t)
+            sqrt_one_minus = torch.sqrt(1 - a_bar_t)
+            x_t = sqrt_a * x0 + sqrt_one_minus * eps
         eps_hat = eps_model(x_t, t, visit_mask=visit_mask)
-        x0_pred = (x_t - torch.sqrt(1 - a_bar_t) * eps_hat) / torch.sqrt(a_bar_t)
+        if use_hyperbolic and manifold is not None:
+            x0_pred = _hyperbolic_remove_noise(manifold, x_t, eps_hat, sqrt_a, sqrt_one_minus)
+        else:
+            x0_pred = (x_t - sqrt_one_minus * eps_hat) / sqrt_a
 
         # decode with VisitDecoder
         logits = visit_dec(x0_pred)  # [B, L, num_real_codes]
@@ -1052,8 +1139,8 @@ if __name__ == "__main__":
     torch.manual_seed(seed)
 
     experiments = [
-        ("depth2_base_w/Dec", ToyICDHierarchy(extra_depth=0)),
-        ("depth7_extended_w/Dec", ToyICDHierarchy(extra_depth=5)),
+        ("depth2_base_w-DecHypNoise", ToyICDHierarchy(extra_depth=0)),
+        ("depth7_extended_wDecHypNoise", ToyICDHierarchy(extra_depth=5)),
     ]
 
     configs = [
