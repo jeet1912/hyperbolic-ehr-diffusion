@@ -5,6 +5,7 @@
 
 Best validation loss: 0.332425
 Test loss: 0.326676
+Test accuracy: 0.0294
 
 Sample trajectory (hyperbolic) 1:
   Visit 1: ['C002', 'C102', 'C210', 'C320']
@@ -39,6 +40,7 @@ Correlation(tree_dist, hyperbolic_embedding_dist) = -0.0031
 
 Best validation loss: 0.623683
 Test loss: 0.618369
+Test accuracy: 0.1057
 
 Sample trajectory (euclidean) 1:
   Visit 1: ['C040', 'C323', 'C403', 'C411']
@@ -73,6 +75,7 @@ Correlation(tree_dist, euclidean_embedding_dist) = 0.0515
 
 Best validation loss: 0.377999
 Test loss: 0.376347
+Test accuracy: 0.0210
 
 Sample trajectory (hyperbolic) 1:
   Visit 1: ['C203', 'C342', 'C420', 'C421']
@@ -107,6 +110,7 @@ Correlation(tree_dist, hyperbolic_embedding_dist) = 0.9868
 
 Best validation loss: 0.635257
 Test loss: 0.655352
+Test accuracy: 0.1133
 
 Sample trajectory (euclidean) 1:
   Visit 1: ['C001', 'C022', 'C311', 'C413']
@@ -141,6 +145,7 @@ Correlation(tree_dist, euclidean_embedding_dist) = 0.3726
 
 Best validation loss: 0.326480
 Test loss: 0.330172
+Test accuracy: 0.0046
 
 Sample trajectory (hyperbolic) 1:
   Visit 1: ['C244', 'C310', 'C400', 'C103d1']
@@ -175,6 +180,7 @@ Correlation(tree_dist, hyperbolic_embedding_dist) = 0.0509
 
 Best validation loss: 0.633295
 Test loss: 0.635111
+Test accuracy: 0.0394
 
 Sample trajectory (euclidean) 1:
   Visit 1: ['C044', 'C023d3', 'C134d0', 'C433d1']
@@ -209,6 +215,7 @@ Correlation(tree_dist, euclidean_embedding_dist) = -0.0043
 
 Best validation loss: 0.370899
 Test loss: 0.381992
+Test accuracy: 0.0124
 
 Sample trajectory (hyperbolic) 1:
   Visit 1: ['C010d3', 'C010d4', 'C011d4', 'C014d4']
@@ -243,6 +250,7 @@ Correlation(tree_dist, hyperbolic_embedding_dist) = 0.9704
 
 Best validation loss: 0.648082
 Test loss: 0.646227
+Test accuracy: 0.0277
 
 Sample trajectory (euclidean) 1:
   Visit 1: ['C130d1', 'C232d4', 'C343d3', 'C411d0']
@@ -271,18 +279,18 @@ Sample trajectory (euclidean) 3:
 Correlation(tree_dist, euclidean_embedding_dist) = 0.2246
 
 ## Comparision Table
-| Depth / Experiment | Source | Embedding | Reg | Mean depth | Depth std | Mean tree dist | Tree dist std | Mean root purity | Root purity std | Corr(tree, emb) | Best val loss | Test loss |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| depth2_base | Real | — | — | 1.6439 | 0.5138 | 2.1206 | 1.2453 | 0.6242 | 0.2040 | — | — | — |
-| depth2_base | Synthetic | Hyperbolic | Off | 1.6700 | 0.4881 | 3.3617 | 0.8362 | 0.5139 | 0.1456 | -0.0031 | 0.3324 | 0.3267 |
-| depth2_base | Synthetic | Euclidean | Off | 1.8534 | 0.3756 | 3.3779 | 0.8635 | 0.4648 | 0.1389 | 0.0515 | 0.6237 | 0.6184 |
-| depth2_base | Synthetic | Hyperbolic | On | 2.0000 | 0.0000 | 2.4406 | 0.8289 | 0.4676 | 0.1536 | 0.9868 | 0.3780 | 0.3763 |
-| depth2_base | Synthetic | Euclidean | On | 1.9552 | 0.2235 | 3.4458 | 0.9052 | 0.4728 | 0.1355 | 0.3726 | 0.6353 | 0.6554 |
-| depth7_extended | Real | — | — | 5.3798 | 1.7295 | 5.7591 | 4.7567 | 0.6290 | 0.2047 | — | — | — |
-| depth7_extended | Synthetic | Hyperbolic | Off | 4.1254 | 1.6717 | 7.9647 | 2.5450 | 0.4735 | 0.1343 | 0.0509 | 0.3265 | 0.3302 |
-| depth7_extended | Synthetic | Euclidean | Off | 4.3008 | 1.7453 | 8.0325 | 2.8330 | 0.4927 | 0.1380 | -0.0043 | 0.6333 | 0.6351 |
-| depth7_extended | Synthetic | Hyperbolic | On | 6.6254 | 0.5911 | 3.8443 | 4.8164 | 0.5664 | 0.1433 | 0.9704 | 0.3709 | 0.3820 |
-| depth7_extended | Synthetic | Euclidean | On | 5.0636 | 1.7319 | 9.6324 | 3.0117 | 0.4779 | 0.1517 | 0.2246 | 0.6481 | 0.6462 |
+| Depth / Experiment | Source | Embedding | Reg | Mean depth | Depth std | Mean tree dist | Tree dist std | Mean root purity | Root purity std | Corr(tree, emb) | Best val loss | Test loss | Test accuracy |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| depth2_base | Real | — | — | 1.6439 | 0.5138 | 2.1206 | 1.2453 | 0.6242 | 0.2040 | — | — | — | — |
+| depth2_base | Synthetic | Hyperbolic | Off | 1.6700 | 0.4881 | 3.3617 | 0.8362 | 0.5139 | 0.1456 | -0.0031 | 0.3324 | 0.3267 | 0.0294 |
+| depth2_base | Synthetic | Euclidean | Off | 1.8534 | 0.3756 | 3.3779 | 0.8635 | 0.4648 | 0.1389 | 0.0515 | 0.6237 | 0.6184 | 0.1057 |
+| depth2_base | Synthetic | Hyperbolic | On | 2.0000 | 0.0000 | 2.4406 | 0.8289 | 0.4676 | 0.1536 | 0.9868 | 0.3780 | 0.3763 | 0.0210 |
+| depth2_base | Synthetic | Euclidean | On | 1.9552 | 0.2235 | 3.4458 | 0.9052 | 0.4728 | 0.1355 | 0.3726 | 0.6353 | 0.6554 | 0.1133 |
+| depth7_extended | Real | — | — | 5.3798 | 1.7295 | 5.7591 | 4.7567 | 0.6290 | 0.2047 | — | — | — | — |
+| depth7_extended | Synthetic | Hyperbolic | Off | 4.1254 | 1.6717 | 7.9647 | 2.5450 | 0.4735 | 0.1343 | 0.0509 | 0.3265 | 0.3302 | 0.0046 |
+| depth7_extended | Synthetic | Euclidean | Off | 4.3008 | 1.7453 | 8.0325 | 2.8330 | 0.4927 | 0.1380 | -0.0043 | 0.6333 | 0.6351 | 0.0394 |
+| depth7_extended | Synthetic | Hyperbolic | On | 6.6254 | 0.5911 | 3.8443 | 4.8164 | 0.5664 | 0.1433 | 0.9704 | 0.3709 | 0.3820 | 0.0124 |
+| depth7_extended | Synthetic | Euclidean | On | 5.0636 | 1.7319 | 9.6324 | 3.0117 | 0.4779 | 0.1517 | 0.2246 | 0.6481 | 0.6462 | 0.0277 |
 
 ## Results
 This section evaluates the performance of the proposed hyperbolic diffusion framework across two controlled ICD hierarchies of varying depth—depth2_base (a shallow taxonomy) and depth7_extended (a richer, multi-level structure). For each hierarchy, I compare synthetic trajectories generated using hyperbolic vs. Euclidean latent geometries, with and without the proposed geometric regularization, and analyze the resulting distributions using several hierarchy-aware metrics: mean visit depth, intra-visit tree distance, root purity (top-level category consistency), and correlation between hierarchical tree distance and latent embedding distance. Together, these measurements quantify the degree to which each configuration preserves the underlying medical taxonomy.
