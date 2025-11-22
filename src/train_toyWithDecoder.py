@@ -35,7 +35,6 @@ class TrajDataset(Dataset):
         return traj  # list of visits (each visit is list of code indices)
 
 
-
 def make_collate_fn(pad_idx):
     def collate_fn(batch):
         B = len(batch)
@@ -59,8 +58,8 @@ def make_collate_fn(pad_idx):
 
         visit_mask = torch.tensor(visit_mask, dtype=torch.bool)
         return flat_visits, B, L, visit_mask
-    return collate_fn
 
+    return collate_fn
 
 
 def build_visit_tensor(visit_enc, flat_visits, B, L, dim, device):
@@ -72,6 +71,10 @@ def build_visit_tensor(visit_enc, flat_visits, B, L, dim, device):
 
 
 def decode_visit_vectors(sampled_visits, code_emb, visit_enc, embedding_type, codes_per_visit):
+    """
+    OLD embedding-similarity decoder. Kept for potential analysis,
+    but not used in the main pipeline once VisitDecoder is introduced.
+    """
     num_samples, max_len, dim = sampled_visits.shape
     visit_vecs = sampled_visits.view(num_samples * max_len, dim)  # [B*L, D]
 
@@ -188,6 +191,43 @@ def code_pair_loss(code_emb, hier, device, num_pairs=512):
     return torch.mean((d_hyper - d_tree) ** 2)
 
 
+class VisitDecoder(nn.Module):
+    """
+    Shared Euclidean decoder for both hyperbolic and Euclidean setups.
+
+    Input: visit latent(s) in R^d
+      - shape [B, L, d] or [B*L, d]
+    Output:
+      - logits over real codes (no pad) of shape [B, L, num_codes] or [B*L, num_codes]
+    """
+    def __init__(self, dim: int, num_codes: int,
+                 hidden_dim: int = 128, dropout: float = 0.1):
+        super().__init__()
+        self.dim = dim
+        self.num_codes = num_codes
+
+        self.net = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, num_codes)  # raw logits
+        )
+
+    def forward(self, v: torch.Tensor) -> torch.Tensor:
+        """
+        v: [B, L, dim] or [B*L, dim]
+        returns: logits over codes with matching leading dims
+        """
+        if v.dim() == 3:
+            B, L, D = v.shape
+            v_flat = v.view(B * L, D)
+            logits_flat = self.net(v_flat)        # [B*L, num_codes]
+            return logits_flat.view(B, L, self.num_codes)
+        elif v.dim() == 2:
+            return self.net(v)                    # [N, num_codes]
+        else:
+            raise ValueError(f"Expected v of shape [B,L,d] or [N,d], got {v.shape}")
+
 
 def sample_fake_visit_indices(
     eps_model,
@@ -198,10 +238,15 @@ def sample_fake_visit_indices(
     alphas_cumprod,
     code_emb,
     visit_enc,
+    visit_dec,
     codes_per_visit,
     device,
     embedding_type,
 ):
+    """
+    Quick helper for synthetic visits from random latents.
+    Now uses VisitDecoder instead of embedding nearest-neighbors.
+    """
     was_training = eps_model.training
     eps_model.eval()
     with torch.no_grad():
@@ -214,15 +259,21 @@ def sample_fake_visit_indices(
 
         eps_hat = eps_model(x_t, t, visit_mask=visit_mask)
         x0_pred = (x_t - torch.sqrt(1 - a_bar_t) * eps_hat) / torch.sqrt(a_bar_t)
+
+        # decode via VisitDecoder
+        logits = visit_dec(x0_pred)  # [num_samples, max_len, num_codes_real]
+        topk_idx = logits.topk(k=codes_per_visit, dim=-1).indices  # [num_samples, max_len, K]
+
     if was_training:
         eps_model.train()
-    return decode_visit_vectors(x0_pred, code_emb, visit_enc, embedding_type, codes_per_visit)
+    return topk_idx.cpu()
 
 
 def sample_trajectories(
     eps_model,
     code_emb,
     visit_enc,
+    visit_dec,
     hier,
     alphas,
     betas,
@@ -238,6 +289,7 @@ def sample_trajectories(
 ):
     eps_model.eval()
     visit_enc.eval()
+    visit_dec.eval()
     synthetic_trajs = []
 
     with torch.no_grad():
@@ -265,9 +317,10 @@ def sample_trajectories(
                 x_t = mean
 
         sampled_visits = x_t  # approx x0: [num_samples, max_len, dim]
-        decoded_idx = decode_visit_vectors(
-            sampled_visits, code_emb, visit_enc, embeddingType, codes_per_visit
-        )
+
+        # Decode with VisitDecoder
+        logits = visit_dec(sampled_visits)  # [num_samples, max_len, num_codes_real]
+        decoded_idx = logits.topk(k=codes_per_visit, dim=-1).indices  # [num_samples, max_len, K]
 
     decoded_idx = decoded_idx.view(num_samples, max_len, codes_per_visit)
 
@@ -313,6 +366,7 @@ def compute_batch_loss(
     visit_mask,
     eps_model,
     visit_enc,
+    visit_dec,
     code_emb,
     hier,
     alphas_cumprod,
@@ -325,8 +379,15 @@ def compute_batch_loss(
     lambda_tree,
     lambda_radius,
     depth_targets,
-    fake_sample_size=2,  # unused now, fine to keep for API compatibility
+    lambda_recon=1.0,
 ):
+    """
+    Main training objective:
+      - DDPM prediction loss in latent space
+      - geometry-aware code_pair_loss
+      - (hyperbolic) radius-depth regularizer
+      - reconstruction loss via VisitDecoder (multi-label BCE on real visits)
+    """
     # 1) Standard DDPM latent loss
     x0 = build_visit_tensor(visit_enc, flat_visits, B, L, dim, device)  # [B, L, D]
     t = torch.randint(0, T, (B,), device=device).long()
@@ -336,7 +397,7 @@ def compute_batch_loss(
     eps_hat = eps_model(x_t, t, visit_mask=visit_mask)
     loss = torch.mean((eps - eps_hat) ** 2)
 
-    # 2) Code-pair geometry regularizer (replaces old tree_penalty)
+    # 2) Code-pair geometry regularizer
     if lambda_tree > 0.0:
         pair_loss = code_pair_loss(code_emb, hier, device=device, num_pairs=512)
         loss = loss + lambda_tree * pair_loss
@@ -344,9 +405,44 @@ def compute_batch_loss(
     # 3) Radius-depth regularizer for hyperbolic embeddings
     if embedding_type == "hyperbolic" and depth_targets is not None and lambda_radius > 0.0:
         # radius over all codes, including pad
-        radius = torch.norm(code_emb.emb, dim=-1)             # [num_codes + 1]
+        base_emb = code_emb.emb
+        if isinstance(base_emb, nn.Embedding):
+            emb_tensor = base_emb.weight
+        else:
+            emb_tensor = base_emb
+        radius = torch.norm(emb_tensor, dim=-1)             # [num_codes + 1]
         radius_mismatch = torch.mean((radius - depth_targets) ** 2)
         loss = loss + lambda_radius * radius_mismatch
+
+    # 4) Reconstruction loss via VisitDecoder (multi-label BCE on real visits)
+    if lambda_recon > 0.0:
+        num_real_codes = len(hier.codes)
+        # logits: [B, L, num_real_codes]
+        logits = visit_dec(x0)
+        B_, L_, C_ = logits.shape
+        assert B_ == B and L_ == L and C_ == num_real_codes
+
+        logits_flat = logits.view(B * L, num_real_codes)  # [B*L, C]
+        visit_mask_flat = visit_mask.view(-1)             # [B*L]
+
+        # build multi-hot targets per visit
+        targets = torch.zeros_like(logits_flat)           # [B*L, C]
+        for idx, visit_tensor in enumerate(flat_visits):
+            if not bool(visit_mask_flat[idx].item()):
+                continue
+            visit_codes = visit_tensor.detach().cpu().tolist()
+            for c in visit_codes:
+                if 0 <= int(c) < num_real_codes:
+                    targets[idx, int(c)] = 1.0
+
+        bce = nn.BCEWithLogitsLoss(reduction="none")
+        recon_loss_all = bce(logits_flat, targets)        # [B*L, C]
+        # mask out pad visits
+        if visit_mask_flat.any():
+            mask_rows = visit_mask_flat.to(logits_flat.dtype).unsqueeze(-1)  # [B*L,1]
+            recon_loss_all = recon_loss_all * mask_rows
+            recon_loss = recon_loss_all.sum() / (mask_rows.sum() * num_real_codes + 1e-8)
+            loss = loss + lambda_recon * recon_loss
 
     return loss
 
@@ -358,6 +454,7 @@ def compute_batch_accuracy(
     visit_mask,
     eps_model,
     visit_enc,
+    visit_dec,
     code_emb,
     alphas_cumprod,
     T,
@@ -368,7 +465,11 @@ def compute_batch_accuracy(
     codes_per_visit,
     pad_idx,
 ):
+    """
+    Reconstruction recall@K on real visits, using VisitDecoder.
+    """
     visit_enc.eval()
+    visit_dec.eval()
     with torch.no_grad():
         x0 = build_visit_tensor(visit_enc, flat_visits, B, L, dim, device)
         t = torch.randint(0, T, (B,), device=device).long()
@@ -378,16 +479,19 @@ def compute_batch_accuracy(
         eps_hat = eps_model(x_t, t, visit_mask=visit_mask)
         x0_pred = (x_t - torch.sqrt(1 - a_bar_t) * eps_hat) / torch.sqrt(a_bar_t)
 
-    decoded_idx = decode_visit_vectors(
-        x0_pred, code_emb, visit_enc, embedding_type, codes_per_visit
-    )
+        # decode with VisitDecoder
+        logits = visit_dec(x0_pred)  # [B, L, num_real_codes]
+        decoded_idx = logits.topk(k=codes_per_visit, dim=-1).indices  # [B, L, K]
+
     decoded_idx = decoded_idx.view(B * L, codes_per_visit)
 
     visit_mask_flat = visit_mask.view(-1).cpu()
     total = 0
     correct = 0
 
-    for visit_tensor, mask_value, preds in zip(flat_visits, visit_mask_flat, decoded_idx):
+    for i, (visit_tensor, mask_value, preds) in enumerate(
+        zip(flat_visits, visit_mask_flat, decoded_idx)
+    ):
         if not bool(mask_value.item()):
             continue
         visit_codes = visit_tensor.detach().cpu().tolist()
@@ -407,6 +511,7 @@ def run_epoch(
     loader,
     eps_model,
     visit_enc,
+    visit_dec,
     code_emb,
     hier,
     alphas_cumprod,
@@ -419,14 +524,16 @@ def run_epoch(
     lambda_tree_eff,
     lambda_radius_eff,
     depth_targets,
+    lambda_recon,
     optimizer=None,
-    fake_sample_size=2,
 ):
     is_training = optimizer is not None
     if is_training:
         eps_model.train()
+        visit_dec.train()
     else:
         eps_model.eval()
+        visit_dec.eval()
 
     total_loss = 0.0
     total_samples = 0
@@ -443,6 +550,7 @@ def run_epoch(
                 visit_mask,
                 eps_model,
                 visit_enc,
+                visit_dec,
                 code_emb,
                 hier,
                 alphas_cumprod,
@@ -455,9 +563,8 @@ def run_epoch(
                 lambda_tree_eff,
                 lambda_radius_eff,
                 depth_targets,
-                fake_sample_size=fake_sample_size,
+                lambda_recon=lambda_recon,
             )
-
 
             if is_training:
                 optimizer.zero_grad()
@@ -475,6 +582,7 @@ def train_model(
     eps_model,
     code_emb,
     visit_enc,
+    visit_dec,
     train_loader,
     val_loader,
     hier,
@@ -488,10 +596,14 @@ def train_model(
     lambda_tree,
     lambda_radius,
     depth_targets,
+    lambda_recon=1.0,
     n_epochs=20,
 ):
     optimizer = torch.optim.Adam(
-        list(eps_model.parameters()) + list(code_emb.parameters()), lr=2e-4
+        list(eps_model.parameters()) +
+        list(code_emb.parameters()) +
+        list(visit_dec.parameters()),
+        lr=2e-4,
     )
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=3
@@ -501,16 +613,17 @@ def train_model(
     best_weights = {
         "eps_model": copy.deepcopy(eps_model.state_dict()),
         "code_emb": copy.deepcopy(code_emb.state_dict()),
+        "visit_dec": copy.deepcopy(visit_dec.state_dict()),
     }
 
     train_losses = []
     val_losses = []
 
-    # warm-up config: first 30% of epochs
+    # warm-up config: first 30% of epochs for geometry regs
     warmup_epochs = max(1, int(0.3 * n_epochs))
 
     for epoch in range(1, n_epochs + 1):
-        # linearly ramp up regularization
+        # linearly ramp up regularization for tree/radius terms
         scale = min(1.0, epoch / warmup_epochs)
         lambda_tree_eff = lambda_tree * scale
         lambda_radius_eff = lambda_radius * scale
@@ -519,6 +632,7 @@ def train_model(
             train_loader,
             eps_model,
             visit_enc,
+            visit_dec,
             code_emb,
             hier,
             alphas_cumprod,
@@ -531,12 +645,14 @@ def train_model(
             lambda_tree_eff,
             lambda_radius_eff,
             depth_targets,
+            lambda_recon=lambda_recon,
             optimizer=optimizer,
         )
         val_loss = run_epoch(
             val_loader,
             eps_model,
             visit_enc,
+            visit_dec,
             code_emb,
             hier,
             alphas_cumprod,
@@ -549,6 +665,7 @@ def train_model(
             lambda_tree_eff,
             lambda_radius_eff,
             depth_targets,
+            lambda_recon=lambda_recon,
             optimizer=None,
         )
 
@@ -560,7 +677,8 @@ def train_model(
         print(
             f"Epoch {epoch}/{n_epochs}, "
             f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}, "
-            f"lambda_tree_eff={lambda_tree_eff:.4f}, lambda_radius_eff={lambda_radius_eff:.4f}"
+            f"lambda_tree_eff={lambda_tree_eff:.4f}, lambda_radius_eff={lambda_radius_eff:.4f}, "
+            f"lambda_recon={lambda_recon:.4f}"
         )
 
         if val_loss < best_val:
@@ -568,10 +686,12 @@ def train_model(
             best_weights = {
                 "eps_model": copy.deepcopy(eps_model.state_dict()),
                 "code_emb": copy.deepcopy(code_emb.state_dict()),
+                "visit_dec": copy.deepcopy(visit_dec.state_dict()),
             }
 
     eps_model.load_state_dict(best_weights["eps_model"])
     code_emb.load_state_dict(best_weights["code_emb"])
+    visit_dec.load_state_dict(best_weights["visit_dec"])
     return train_losses, val_losses, best_val
 
 
@@ -579,6 +699,7 @@ def evaluate_loader(
     loader,
     eps_model,
     visit_enc,
+    visit_dec,
     code_emb,
     hier,
     alphas_cumprod,
@@ -591,8 +712,10 @@ def evaluate_loader(
     lambda_tree,
     lambda_radius,
     depth_targets,
+    lambda_recon,
 ):
     eps_model.eval()
+    visit_dec.eval()
     with torch.no_grad():
         total_loss = 0.0
         total_samples = 0
@@ -606,6 +729,7 @@ def evaluate_loader(
                 visit_mask,
                 eps_model,
                 visit_enc,
+                visit_dec,
                 code_emb,
                 hier,
                 alphas_cumprod,
@@ -618,6 +742,7 @@ def evaluate_loader(
                 lambda_tree,
                 lambda_radius,
                 depth_targets,
+                lambda_recon=lambda_recon,
             )
             total_loss += loss.item() * B
             total_samples += B
@@ -628,6 +753,7 @@ def evaluate_test_accuracy(
     loader,
     eps_model,
     visit_enc,
+    visit_dec,
     code_emb,
     alphas_cumprod,
     T,
@@ -638,8 +764,12 @@ def evaluate_test_accuracy(
     codes_per_visit,
     pad_idx,
 ):
+    """
+    Reconstruction recall@K on real visits, averaged over the test loader.
+    """
     eps_model.eval()
     visit_enc.eval()
+    visit_dec.eval()
     with torch.no_grad():
         total_correct = 0
         total_items = 0
@@ -653,6 +783,7 @@ def evaluate_test_accuracy(
                 visit_mask,
                 eps_model,
                 visit_enc,
+                visit_dec,
                 code_emb,
                 alphas_cumprod,
                 T,
@@ -771,7 +902,7 @@ def main(
     else:
         train_trajs, val_trajs, test_trajs = traj_splits
         trajs = train_trajs + val_trajs + test_trajs
-    
+
     max_len = 6
 
     batch_size = 64
@@ -780,28 +911,30 @@ def main(
     collate = make_collate_fn(pad_idx)
 
     train_ds = TrajDataset(train_trajs, max_len=max_len, pad_idx=pad_idx)
-    val_ds   = TrajDataset(val_trajs,   max_len=max_len, pad_idx=pad_idx)
-    test_ds  = TrajDataset(test_trajs,  max_len=max_len, pad_idx=pad_idx)
-
+    val_ds = TrajDataset(val_trajs, max_len=max_len, pad_idx=pad_idx)
+    test_ds = TrajDataset(test_trajs, max_len=max_len, pad_idx=pad_idx)
 
     train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate)
     val_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate)
     test_dl = DataLoader(test_ds, batch_size=batch_size, shuffle=False, collate_fn=collate)
-    
+
     # 2) embeddings + visit encoder
     if embeddingType == "euclidean":
         code_emb = EuclideanCodeEmbedding(
             num_codes=len(hier.codes) + 1,  # +1 for pad
-            dim=dim
+            dim=dim,
         ).to(device)
         visit_enc = EuclideanVisitEncoder(code_emb, pad_idx=pad_idx).to(device)
     else:
         code_emb = HyperbolicCodeEmbedding(
             num_codes=len(hier.codes) + 1,  # +1 for pad
-            dim=dim
+            dim=dim,
         ).to(device)
         visit_enc = VisitEncoder(code_emb, pad_idx=pad_idx).to(device)
 
+    # 2b) visit decoder (shared across geometries, only real codes)
+    num_real_codes = len(hier.codes)
+    visit_dec = VisitDecoder(dim=dim, num_codes=num_real_codes).to(device)
 
     # 3) diffusion params
     T = 1000
@@ -817,9 +950,10 @@ def main(
     eps_model = TrajectoryEpsModel(dim=dim, n_layers=n_layers, T_max=T).to(device)
     codes_per_visit = 4
 
-    # base lambdas (max strength after warm-up)
+    # base lambdas (max strength after warm-up for geometry)
     lambda_tree = 0.01 if use_regularization else 0.0
     lambda_radius = 0.003 if (embeddingType == "hyperbolic" and use_regularization) else 0.0
+    lambda_recon = 1.0  # decoder reconstruction weight
 
     depth_targets = None
     if embeddingType == "hyperbolic" and lambda_radius > 0.0:
@@ -829,11 +963,11 @@ def main(
         # add one entry for pad index (e.g. target radius = 0)
         depth_targets = torch.cat([depth_targets, torch.zeros(1, device=device)], dim=0)
 
-
     train_losses, val_losses, best_val = train_model(
         eps_model,
         code_emb,
         visit_enc,
+        visit_dec,
         train_dl,
         val_dl,
         hier,
@@ -847,6 +981,7 @@ def main(
         lambda_tree,
         lambda_radius,
         depth_targets,
+        lambda_recon=lambda_recon,
         n_epochs=10,
     )
     print(f"Best validation loss: {best_val:.6f}")
@@ -863,10 +998,12 @@ def main(
     }
     save_loss_curves(train_losses, val_losses, meta)
     print("Saved loss curves to results/plots")
+
     test_accuracy = evaluate_test_accuracy(
         test_dl,
         eps_model,
         visit_enc,
+        visit_dec,
         code_emb,
         alphas_cumprod,
         T,
@@ -877,12 +1014,14 @@ def main(
         codes_per_visit,
         pad_idx,
     )
-    print(f"Test accuracy: {test_accuracy:.4f}")
+    print(f"Test recall@{codes_per_visit}: {test_accuracy:.4f}")
+
     num_samples_for_eval = 1000
     synthetic_trajs = sample_trajectories(
         eps_model,
         code_emb,
         visit_enc,
+        visit_dec,
         hier,
         alphas,
         betas,
@@ -912,8 +1051,8 @@ if __name__ == "__main__":
     torch.manual_seed(seed)
 
     experiments = [
-        ("depth2_base", ToyICDHierarchy(extra_depth=0)),
-        ("depth7_extended", ToyICDHierarchy(extra_depth=5)),
+        ("depth2_base_w/Dec", ToyICDHierarchy(extra_depth=0)),
+        ("depth7_extended_w/Dec", ToyICDHierarchy(extra_depth=5)),
     ]
 
     configs = [
