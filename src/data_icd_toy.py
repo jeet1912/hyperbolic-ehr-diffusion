@@ -1,5 +1,7 @@
 import networkx as nx
 import random
+import os
+import matplotlib.pyplot as plt
 
 class ToyICDHierarchy:
     """
@@ -102,8 +104,57 @@ def sample_toy_trajectories(hier: ToyICDHierarchy,
     return trajs
 
 
+def _hierarchy_positions(hier: ToyICDHierarchy):
+    depth_groups = {}
+    for code in hier.codes:
+        d = hier.depth(code)
+        depth_groups.setdefault(d, []).append(code)
+
+    positions = {}
+    for depth, codes in depth_groups.items():
+        codes_sorted = sorted(codes)
+        n = len(codes_sorted)
+        for idx, code in enumerate(codes_sorted):
+            x = (idx + 1) / (n + 1)
+            y = -depth
+            positions[code] = (x, y)
+    return positions
+
+
+def plot_hierarchy_graph(hier: ToyICDHierarchy, title: str, filepath: str):
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    pos = _hierarchy_positions(hier)
+    plt.figure(figsize=(20, 20))
+    nx.draw(
+        hier.G,
+        pos,
+        with_labels=True,
+        node_size=200,
+        font_size=6,
+        arrows=True,
+    )
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(filepath)
+    plt.close()
+
+
 if __name__ == "__main__":
     hier = ToyICDHierarchy()
     trajs = sample_toy_trajectories(hier)
     print(len(hier.codes), "codes")
     print("Example traj:", trajs[0])
+
+    graphs_dir = os.path.join("plots", "graphs")
+    base_hier = ToyICDHierarchy(extra_depth=0)
+    extended_hier = ToyICDHierarchy(extra_depth=5)
+    plot_hierarchy_graph(
+        base_hier,
+        "Toy ICD Hierarchy (extra_depth=0)",
+        os.path.join(graphs_dir, "hierarchy_depth2.png"),
+    )
+    plot_hierarchy_graph(
+        extended_hier,
+        "Toy ICD Hierarchy (extra_depth=5)",
+        os.path.join(graphs_dir, "hierarchy_depth7.png"),
+    )
