@@ -354,6 +354,9 @@ codes --[Euclid/Hyperbolic embedding]--> visit encoder --> x0
 - Forward diffusion is Euclidean even for hyperbolic embeddings.
 - Result: Euclidean setups get reasonable recall@4, while hyperbolic setups remain geometry-aware but harder to decode.
 
+### NOTE
+In this setting, each visit contains a set of ICD codes, and the decoder must predict a multi-label output rather than a single class. This makes standard accuracy unsuitable for two reasons. First, accuracy implicitly assumes a single correct label per sample, whereas real EHR visits often contain 3–10 valid codes. A classifier that outputs only the most likely code would achieve deceptively high accuracy while missing most of the clinically relevant labels. Second, diffusion models produce continuous latent vectors that are decoded into a ranking over codes; what matters is whether the correct codes appear in the top portion of this ranked list. Thus, recall@K directly measures whether the decoder successfully retrieves the true medical codes among its top-K predictions, aligning with how clinicians and downstream applications evaluate multi-code retrieval. This metric reflects the practical utility of the generative model: even if the exact set is not reconstructed, high recall@K ensures that clinically related or relevant codes appear in the predicted visit, providing a more faithful measure of semantic retrieval quality than accuracy.
+
 ### 2. Hyperbolic Forward Noise + Decoder (`train_toyWithDecHypNoise.py`)
 
 I keep the VisitDecoder but make the forward noising process respect hyperbolic geometry whenever the embedding is hyperbolic.
