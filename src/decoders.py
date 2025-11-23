@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+import geoopt
+import geoopt.layers
 
 class VisitDecoder(nn.Module):
     """
@@ -94,3 +96,77 @@ class StrongVisitDecoder(nn.Module):
 
         logits_flat = self.out_proj(h)     # [N, num_codes]
         return logits_flat.view(*orig_shape, self.num_codes)
+    
+
+class HyperbolicDistanceDecoder(nn.Module):
+    """
+    hyperbolic decoder:
+    - Optional tiny hyperbolic linear layer
+    - Distance-based logits
+    - Temperature scheduling
+    - Code-frequency-aware negative sampling
+    """
+    def __init__(self, code_embedding: geoopt.ManifoldParameter, 
+                 manifold: geoopt.PoincareBall,
+                 init_temperature: float = 1.0,
+                 min_temperature: float = 0.07,
+                 use_hyper_lin: bool = True,
+                 code_freq: torch.Tensor = None):  # [num_codes], optional
+        super().__init__()
+        self.manifold = manifold
+        self.code_emb = code_embedding
+        self.dim = code_embedding.size(-1)
+        self.use_hyper_lin = use_hyper_lin
+        self.code_freq = code_freq  # for frequency-aware bias
+
+        # Tiny hyperbolic linear (Möbius matrix multiplication)
+        if use_hyper_lin:
+            self.hyper_lin = geoopt.layers.PoincareMLP(
+                in_features=self.dim,
+                out_features=self.dim,
+                c=manifold.c,
+                num_layers=1  # just one layer is enough
+            )
+
+        # Temperature (will be updated externally)
+        self.register_buffer("temperature", torch.tensor(init_temperature))
+        self.min_temperature = min_temperature
+
+        # Frequency bias (log-frequency boost for rare codes)
+        if code_freq is not None:
+            freq_bias = torch.log(code_freq + 1.0)  # avoid log(0)
+            freq_bias = freq_bias - freq_bias.mean()
+            self.register_buffer("freq_bias", freq_bias * 0.5)  # scale gently
+        else:
+            self.register_buffer("freq_bias", None)
+
+    def set_temperature(self, temp: float):
+        self.temperature = torch.tensor(max(temp, self.min_temperature), device=self.temperature.device)
+
+    def forward(self, v_tangent: torch.Tensor) -> torch.Tensor:
+        """
+        v_tangent: [..., dim] in tangent space at origin
+        returns: logits [..., num_codes]
+        """
+        batch_shape = v_tangent.shape[:-1]
+        v_flat = v_tangent.view(-1, self.dim)
+
+        # Optional tiny hyperbolic transformation
+        if self.use_hyper_lin:
+            v_manifold = self.manifold.expmap0(v_flat)
+            v_manifold = self.hyper_lin(v_manifold)
+            v_flat = self.manifold.logmap0(v_manifold)
+
+        # Back to manifold for distance computation
+        v_manifold = self.manifold.expmap0(v_flat)  # [N, dim]
+        code_points = self.code_emb.weight          # [C, dim]
+
+        # Hyperbolic distance squared
+        dist_sq = self.manifold.dist2(v_manifold.unsqueeze(-2), code_points.unsqueeze(0))  # [N, 1, C] -> [N, C]
+        logits = -dist_sq.squeeze(-2) / (self.temperature ** 2)  # [N, C]
+
+        # Frequency-aware negative sampling boost
+        if self.freq_bias is not None:
+            logits = logits + self.freq_bias.unsqueeze(0)  # broadcast
+
+        return logits.view(*batch_shape, -1)

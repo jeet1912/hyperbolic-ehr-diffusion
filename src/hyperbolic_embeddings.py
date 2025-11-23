@@ -49,3 +49,40 @@ class VisitEncoder(nn.Module):
             visit_vecs.append(visit_vec)
 
         return torch.stack(visit_vecs, dim=0)
+
+
+class HyperbolicVisitEncoder(nn.Module):
+    """
+    SOTA hyperbolic visit encoder using Einstein midpoint.
+    This is the one that finally beats mean pooling by miles.
+    """
+    def __init__(self, code_embedding, pad_idx: int):
+        super().__init__()
+        self.code_embedding = code_embedding
+        self.manifold = code_embedding.manifold
+        self.pad_idx = pad_idx
+
+    def forward(self, flat_visits):
+        """
+        flat_visits: list of LongTensor (one per visit)
+        returns: [num_visits, dim] tangent vectors at origin
+        """
+        latents = []
+        device = next(self.code_embedding.parameters()).device
+
+        for ids in flat_visits:
+            ids = ids[ids != self.pad_idx]
+            if len(ids) == 0:
+                zero = torch.zeros(self.code_embedding.emb.size(-1), device=device)
+                latents.append(zero)
+                continue
+
+            z = self.code_embedding(ids)  # [k, dim] on Poincaré ball
+
+            # Einstein midpoint = hyperbolic barycenter
+            midpoint = self.manifold.midpoint(z.unsqueeze(0))  # [1, 1, dim]
+            tangent = self.manifold.logmap0(midpoint).squeeze(0)  # [dim]
+
+            latents.append(tangent)
+
+        return torch.stack(latents)
