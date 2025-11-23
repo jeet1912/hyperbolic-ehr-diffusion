@@ -53,7 +53,7 @@ This file constructs a controlled environment where I can debug the model's unde
 ### `train_toy.py` (and variants)
 *The training loops.*
 -   **`train_toy.py`**: The original DDPM training script.
--   **`train_toy_archFix{2,7}.py`**: The modern Rectified Flow training scripts. They implement the flow matching loss and Euler integration sampling.
+-   **`train_rectified_flow.py`**: The modern Rectified Flow training script (formerly `train_toy_archFix*.py`). It implements the flow matching loss and Euler integration sampling, supporting variable hierarchy depths via command-line arguments.
 
 ---
 
@@ -104,7 +104,7 @@ The failure of the previous variants revealed four fundamental "culprits" that p
 
 ### The Pivot: Rectified Flow
 
-In `train_toy_archFix{2,7}.py`, I abandoned the noisy DDPM for **Rectified Flow**. This models the problem as finding a deterministic velocity field in the tangent space.
+In `train_rectified_flow.py` (previously `train_toy_archFix{2,7}.py`), I abandoned the noisy DDPM for **Rectified Flow**. This models the problem as finding a deterministic velocity field in the tangent space.
 
 #### 1. Interpolation
 For data $X_1$ and noise $X_0$, we define a straight path:
