@@ -159,7 +159,10 @@ class HyperbolicDistanceDecoder(nn.Module):
 
         # Back to manifold for distance computation
         v_manifold = self.manifold.expmap0(v_flat)  # [N, dim]
-        code_points = self.code_emb.weight          # [C, dim]
+        if hasattr(self.code_emb, "weight"):
+            code_points = self.code_emb.weight
+        else:
+            code_points = self.code_emb
 
         # Hyperbolic distance squared
         dist_sq = self.manifold.dist2(v_manifold.unsqueeze(-2), code_points.unsqueeze(0))  # [N, 1, C] -> [N, C]
