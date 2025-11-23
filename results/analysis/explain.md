@@ -575,3 +575,19 @@ The architecture in `train_toy_archFix{2,7}.py` (Rectified Flow) differs signifi
 **4. Decoder & Visit Collator:**
 - **Hyperbolic DDPM:** Uses a simpler `VisitDecoder` with standard BCE loss.
 - **Rectified Flow:** Uses a stronger decoder (`StrongVisitDecoder` or `HyperbolicDistanceDecoder`) with **Focal Loss** to handle class imbalance better. It also employs a dedicated `VisitCollator` to handle batching more efficiently.
+
+## Encoders and Decoders
+
+The final architecture uses distinct encoder/decoder pairs depending on the embedding geometry.
+
+#### Euclidean Pipeline
+- **Encoder (`LearnableVisitEncoder`):** A learnable pooling module that aggregates code embeddings into a single visit vector. It can use an attention mechanism (`use_attention=True`) to weigh codes dynamically or default to simple pooling. It projects the aggregated vector into the latent dimension.
+- **Decoder (`StrongVisitDecoder`):** A deep residual Multi-Layer Perceptron (MLP) (e.g., 6 residual blocks with hidden dimension 512). It takes the latent visit vector and predicts logits for all possible ICD codes. This increased depth allows it to unpack complex combinatorial signals from the latent space.
+
+#### Hyperbolic Pipeline
+- **Encoder (`HyperbolicVisitEncoder`):** Instead of standard mean pooling, this encoder computes the **Einstein Midpoint** (hyperbolic barycenter) of the code embeddings in the Poincaré ball. This operation respects the hyperbolic geometry. The resulting point on the manifold is then mapped to the tangent space at the origin via the logarithmic map (`logmap0`) to serve as the input for the Rectified Flow model.
+- **Decoder (`HyperbolicDistanceDecoder`):** A geometry-aware decoder that calculates the probability of a code $c$ being in visit $v$ based on their hyperbolic distance. The logits are proportional to the negative squared distance in the Poincaré ball:
+  \[
+  \text{logits}(v, c) = - \frac{d_{\mathbb{B}}(v, c)^2}{\tau}
+  \]
+  where $\tau$ is a learnable or annealed temperature parameter. This forces the model to place visit latents geometrically close to their constituent codes.
