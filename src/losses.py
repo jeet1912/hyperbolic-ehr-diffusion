@@ -45,3 +45,10 @@ def code_pair_loss(code_emb, hier, device, num_pairs: int = 512) -> torch.Tensor
     d_hyper_t = (d_hyper_t - d_hyper_t.mean()) / (d_hyper_t.std() + 1e-6)
 
     return torch.mean((d_hyper_t - d_tree_t) ** 2)
+
+
+def focal_loss(logits, targets, alpha=0.25, gamma=2.0, reduction='mean'):
+    bce = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
+    pt = torch.exp(-bce)
+    focal = alpha * (1 - pt) ** gamma * bce
+    return focal.mean() if reduction == 'mean' else focal.sum()

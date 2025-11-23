@@ -14,7 +14,7 @@ from diffusion import cosine_beta_schedule
 from traj_models import TrajectoryEpsModel
 from metrics_toy import traj_stats
 from data_utils import TrajDataset, make_collate_fn, build_visit_tensor
-from geometry_utils import code_pair_loss
+from losses import code_pair_loss
 from hyperbolic_noise import (
     is_hyperbolic,
     hyperbolic_forward_noise,

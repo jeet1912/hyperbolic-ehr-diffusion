@@ -15,7 +15,7 @@ from traj_models import TrajectoryEpsModel
 from metrics_toy import traj_stats
 from data_utils import TrajDataset, make_collate_fn, build_visit_tensor
 from visit_utils import decode_visit_vectors
-from geometry_utils import code_pair_loss
+from losses import code_pair_loss
 
 
 def sample_fake_visit_indices(
