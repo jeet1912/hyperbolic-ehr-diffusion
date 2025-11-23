@@ -173,14 +173,9 @@ def compute_batch_loss(
 def run_epoch(loader, velocity_model, visit_enc, visit_dec, code_emb, hier,
               device, embedding_type, codes_per_visit, lambda_recon, optimizer=None):
     is_training = optimizer is not None
-    if is_training:
-        velocity_model.train()
-        visit_enc.train()
-        visit_dec.train()
-    else:
-        velocity_model.eval()
-        visit_enc.eval()
-        visit_dec.eval()
+    modules = [velocity_model, visit_enc, visit_dec]
+    for module in modules:
+        module.train() if is_training else module.eval()
 
 
     total_loss = 0.0
@@ -202,7 +197,12 @@ def run_epoch(loader, velocity_model, visit_enc, visit_dec, code_emb, hier,
             if is_training:
                 optimizer.zero_grad()
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(velocity_model.parameters(), 1.0)
+                torch.nn.utils.clip_grad_norm_(
+                    list(velocity_model.parameters())
+                    + list(visit_enc.parameters())
+                    + list(visit_dec.parameters()),
+                    max_norm=1.0,
+                )
                 optimizer.step()
 
             total_loss += loss.item() * B
@@ -217,12 +217,10 @@ def train_model(
     lambda_recon=1000.0, n_epochs=300, plot_dir="results/plots", tag="archFix"
 ):
     params = (list(velocity_model.parameters())
-            + list(visit_enc.parameters())
-            + list(visit_dec.parameters())
-            + list(code_emb.parameters())
-        )
-    optimizer = torch.optim.AdamW(params, lr=3e-4, weight_decay=1e-5)
-
+        + list(visit_enc.parameters())
+        + list(visit_dec.parameters())
+        + list(code_emb.parameters())
+    )
     optimizer = torch.optim.AdamW(params, lr=3e-4, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs)
 
