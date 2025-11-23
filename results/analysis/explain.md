@@ -304,3 +304,187 @@ Latent diffusion process:
 We frame the system as a generative model over visit representations: the DDPM learns to push random noise toward clean visit vectors in latent space. The foundation is a geometry-aware embedding space for codes, where hyperbolic embeddings combined with the tree regularizer force the code manifold to mirror the ICD hierarchy. Decoding remains heuristic: latent visit vectors yield discrete codes by taking the top-K nearest neighbors (log-map plus dot product on the hyperbolic setup).
 
 With these ingredients, we can sample trajectories: the trained diffusion model produces sequences of latent visit vectors, which are then decoded into ICD codes. Yet the crucial limitation is structural. The pipeline does **not** establish a reversible path from ICD codes → latent visit vectors → ICD codes. Instead, real visits are encoded via simple mean pooling; the DDPM denoises those pooled vectors; and decoding relies on a nearest-neighbor lookup. No part of this is an end-to-end autoencoder, so the system never learns to reconstruct discrete visits in the latent space. The DDPM emits continuous vectors only, expecting a downstream lookup to convert them into codes. Consequently, this process genuinely learns to synthesize visit vectors, not actual medical visits, and the decoding procedure is approximate, untrained, and inherently lossy.
+
+## Extended Variants and Regularizers
+
+After the narrative summary I keep a running log of every architectural or loss modification I implemented. Everything below is phrased in first person so it reads the way I actually narrate progress in my notes.
+
+### Baseline context
+
+In `train_toy.py` I train a DDPM over visit vectors \(x_0\) that come from mean-pooled code embeddings. The only geometry-aware terms act directly on the *code* embeddings (tree/radius regularizers). Decoding is still a heuristic nearest-neighbor lookup from latent visits back to codes. Every variant below changes one of three ingredients: how I decode, how I inject noise (Euclidean vs. hyperbolic), and how I constrain the embedding geometry (HDD/HGD). I list them in the order I built them.
+
+### 1. Adding a Learnable Visit Decoder (`train_toyWithDecoder.py`)
+
+Here I insert a parametric visit decoder so I can reconstruct code sets with an actual supervised loss instead of relying on nearest neighbors. (VisitDecoder)
+
+- **Input:** visit latents \(v\in\mathbb{R}^d\) (from encoder or DDPM).
+- **Output:** logits over true codes (no pad token), shape \([B,L,C]\).
+- **Usage:** multi-label prediction because each visit contains a *set* of ICD codes.
+
+**Reconstruction loss.** For each batch I encode visits into \(x_0\in\mathbb{R}^{B\times L\times d}\), sample \(t,\epsilon\), and form
+\[
+x_t=\sqrt{\bar{\alpha}_t}\,x_0+\sqrt{1-\bar{\alpha}_t}\,\epsilon,\qquad
+\hat{x}_0=\frac{x_t-\sqrt{1-\bar{\alpha}_t}\,\hat{\epsilon}(x_t,t)}{\sqrt{\bar{\alpha}_t}}.
+\]
+Multi-hot targets \(y\in\{0,1\}^{B\times L\times C}\) come from ground-truth visits. I decode both \(x_0\) and \(\hat{x}_0\) and apply BCE-with-logits:
+\[
+\mathcal{L}_{\text{recon}}=\operatorname{BCE}(f_{\text{dec}}(x_0),y)+\operatorname{BCE}(f_{\text{dec}}(\hat{x}_0),y).
+\]
+
+**Total loss.**
+\[
+\mathcal{L}=\mathbb{E}\| \epsilon-\hat{\epsilon}(x_t,t)\|_2^2
++\lambda_{\text{tree}}\mathcal{L}_{\text{pair}}
++\lambda_{\text{radius}}\mathcal{L}_{\text{radius}}
++\lambda_{\text{recon}}\mathcal{L}_{\text{recon}}.
+\]
+Now the model is explicitly penalized when decoded codes do not match the original visit.
+
+**Sketch**
+
+```
+codes --[Euclid/Hyperbolic embedding]--> visit encoder --> x0
+     --> DDPM forward (Euclidean noise) --> x_t
+     --> eps_model --> ε̂_t --> x̂0 --> VisitDecoder --> logits/top-K
+```
+
+**Why hyperbolic lagged here.**
+- Decoder is purely Euclidean, so hyperbolic structure is flattened by logmap and mean pooling before the MLP sees it.
+- Encoder is still mean pooling; nothing enforces an invertible path between encoder and decoder.
+- Forward diffusion is Euclidean even for hyperbolic embeddings.
+- Result: Euclidean setups get reasonable recall@4, while hyperbolic setups remain geometry-aware but harder to decode.
+
+### 2. Hyperbolic Forward Noise + Decoder (`train_toyWithDecHypNoise.py`)
+
+I keep the VisitDecoder but make the forward noising process respect hyperbolic geometry whenever the embedding is hyperbolic.
+
+- Treat \(x_0\) as tangent vectors at the origin.
+- Map both \(x_0\) and \(\epsilon\) onto the manifold via `manifold.expmap0`.
+- Use Möbius scalar multiplication and addition to approximate
+  \[
+  x_t \approx \sqrt{\bar{\alpha}_t}\otimes x_0 \;\oplus\; \sqrt{1-\bar{\alpha}_t}\otimes \epsilon.
+  \]
+- Reverse step stays in the tangent space but forward path travels along geodesics. Euclidean embeddings still use standard Gaussian noise.
+- Reconstruction loss remains the same BCE on decoded logits from \(x_0\) and \(\hat{x}_0\).
+
+**Sketch**
+
+```
+codes --[Hyperbolic embedding B_c^d]--> VisitEncoder (logmap0 + mean) --> x0 (tangent)
+     --> hyperbolic forward noise (expmap0 + Möbius) --> x_t
+     --> eps_model --> ε̂_t --> x̂0 --> VisitDecoder --> logits/top-K
+```
+
+**What I observed.**
+- Hyperbolic models hit near-perfect tree-distance correlations (~0.97–0.99).
+- Recall@4 stayed terrible (≈0.01–0.15) in deep hierarchies, whereas Euclidean stayed around 0.14–0.24.
+- Reasons: the decoder is still a tiny Euclidean MLP, latent shells collapse under regularization, and diffusion supervision lives in tangent space while my metrics live on the manifold.
+
+### 3. Hyperbolic Diffusion Distance (HDD) Regularizer (`train_toy_hdd.py`)
+
+I keep the hyperbolic noise + decoder setup and add an HDD loss inspired by diffusion distances on the ICD graph.
+
+- Build Laplacian \(L = D - A\) from the ICD tree and precompute \(\Phi_{t_k}=\exp(-t_k L)\).
+- Stack/normalize to get diffusion embeddings \(\phi(i)\) for each code and define
+  \[
+  d_{\text{HDD}}(i,j)=\|\phi(i)-\phi(j)\|_2.
+  \]
+- HDD loss:
+  \[
+  \mathcal{L}_{\text{HDD}}=\mathbb{E}_{i,j}\big[(d_{\text{emb}}(i,j)-d_{\text{HDD}}(i,j))^2\big].
+  \]
+- Total loss becomes
+  \[
+  \mathcal{L}=\mathcal{L}_{\epsilon}
+  +\lambda_{\text{tree}}\mathcal{L}_{\text{pair}}
+  +\lambda_{\text{radius}}\mathcal{L}_{\text{radius}}
+  +\lambda_{\text{recon}}\mathcal{L}_{\text{recon}}
+  +\lambda_{\text{HDD}}\mathcal{L}_{\text{HDD}}.
+  \]
+
+**Sketch**
+
+```
+ICD tree --> diffusion embeddings φ(i) --> HDD loss
+codes --> code_emb (hyperbolic/Euclid) --> VisitEncoder --> DDPM --> VisitDecoder --> codes
+```
+
+**Outcome.**
+- Hyperbolic + HDD nailed the structure metrics but recall stayed ~0.08 (shallow) and ~0.01 (deep).
+- Euclidean + HDD improved modestly but still beat hyperbolic in recall.
+- The decoder/encoder mismatch remained the bottleneck.
+
+### 4. Hyperbolic Graph Diffusion (HGD) Regularizer (`train_toy_hgd.py`)
+
+Next I added the HGD idea: use a diffusion kernel \(K_t=\exp(-tL)\) to align manifold distances with graph diffusion similarities.
+
+- Convert \(K_t\) to a similarity/distance \(s_t(i,j)\).
+- Loss:
+  \[
+  \mathcal{L}_{\text{HGD}}=\mathbb{E}_{i,j}\big[(d_{\text{emb}}(i,j)-s_t(i,j))^2\big].
+  \]
+- Objective:
+  \[
+  \mathcal{L}=\mathcal{L}_{\epsilon}
+  +\lambda_{\text{recon}}\mathcal{L}_{\text{recon}}
+  +\lambda_{\text{tree}}\mathcal{L}_{\text{pair}}
+  +\lambda_{\text{radius}}\mathcal{L}_{\text{radius}}
+  +\lambda_{\text{HGD}}\mathcal{L}_{\text{HGD}}.
+  \]
+
+**Sketch**
+
+```
+ICD graph --> diffusion kernel K_t --> HGD loss
+codes --> embeddings --> VisitEncoder --> DDPM (hyperbolic noise when needed)
+     --> VisitDecoder --> logits --> codes
+```
+
+**Outcome.**
+- Structural alignment kept improving, but recall hardly moved for hyperbolic models.
+- Euclidean still delivered better recall because the decoder “saw” something more linear.
+
+### 5. Combined HDD + HGD (`train_toy_hdd_hgd.py`)
+
+Finally I stacked both graph-based regularizers on top of the prior losses:
+\[
+\mathcal{L}=\mathcal{L}_{\epsilon}+\lambda_{\text{recon}}\mathcal{L}_{\text{recon}}
++\lambda_{\text{tree}}\mathcal{L}_{\text{pair}}
++\lambda_{\text{radius}}\mathcal{L}_{\text{radius}}
++\lambda_{\text{HDD}}\mathcal{L}_{\text{HDD}}
++\lambda_{\text{HGD}}\mathcal{L}_{\text{HGD}}.
+\]
+
+**Sketch**
+
+```
+ICD tree + graph --> {pair, radius, HDD, HGD}
+codes --> heavily constrained embeddings --> VisitEncoder --> DDPM
+     --> VisitDecoder --> logits --> codes
+```
+
+**Outcome.**
+- Geometry became almost perfect (tree statistics, diffusion alignment), but hyperbolic recall on deep hierarchies still sat near zero.
+- Euclidean retained recall around 0.14 yet never matched the structural stats.
+
+### Where I use hyperbolic noise
+
+- `train_toy.py`, `train_toyWithDecoder.py`: always Euclidean forward noise, even if embeddings are hyperbolic.
+- `train_toyWithDecHypNoise.py`, `train_toy_hdd.py`, `train_toy_hgd.py`, `train_toy_hdd_hgd.py`: `_hyperbolic_forward_noise` kicks in whenever the embedding type is hyperbolic; Euclidean embeddings keep Gaussian noise.
+
+### High-level diagnosis: why hyperbolic ≠ Euclidean in recall
+
+Empirically:
+
+- Hyperbolic + geometry losses → extremely high tree–embedding correlations.
+- Hyperbolic → very low recall@K, especially on deeper hierarchies.
+- Euclidean → lower structural correlation but consistently better recall@4.
+
+Main culprits in my setup:
+
+1. **Decoder expressivity.** A small Euclidean MLP struggles to invert mean-pooled, curved, heavily regularized hyperbolic embeddings.
+2. **Encoder non-invertibility.** Mean pooling discards combinatorial information, so the decoder never sees enough signal to reconstruct sets exactly.
+3. **Objective mismatch.** Geometry losses optimize pairwise structure, not discrete reconstruction accuracy. The only discrete supervision is BCE, which has to fight all other penalties.
+4. **Depth-induced collapse.** Radius/depth + diffusion losses push many codes onto almost identical shells, good for structure but disastrous for distinguishing leaves.
+
+So far: geometry-aware regularizers excel at shaping the manifold yet fail to make the latent space easily decodable into exact visits. To close the gap I likely need stronger set-aware encoders, decoders that respect manifold geometry, or objectives that directly penalize wrong code predictions rather than just mismatched distances.
