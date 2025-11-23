@@ -1,7 +1,7 @@
 from __future__ import annotations
 import torch.nn.functional as F
 import torch
-
+import geoopt
 
 def is_hyperbolic(embedding_type: str | None) -> bool:
     return embedding_type is not None and embedding_type.lower() == "hyperbolic"
@@ -47,9 +47,6 @@ def hyperbolic_remove_noise(manifold, x_t, eps_hat, sqrt_a, sqrt_one_minus_a):
     x0_man = _mobius_scalar_mul_batch(manifold, inv_scale, diff)
     return manifold.logmap0(x0_man)
 
-# rectified_flow_hyperbolic.py
-import torch
-import torch.nn.functional as F
 
 def hyperbolic_rectified_flow_loss(
     model,
