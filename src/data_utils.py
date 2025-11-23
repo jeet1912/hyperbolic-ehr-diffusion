@@ -1,7 +1,5 @@
 from __future__ import annotations
-
-from typing import Callable, List, Sequence, Tuple
-
+from typing import Callable, List, Sequence
 import torch
 from torch.utils.data import Dataset
 

@@ -491,3 +491,38 @@ Main culprits in my setup:
 4. **Depth-induced collapse.** Radius/depth + diffusion losses push many codes onto almost identical shells, good for structure but disastrous for distinguishing leaves.
 
 So far: geometry-aware regularizers excel at shaping the manifold yet fail to make the latent space easily decodable into exact visits. To close the gap I likely need stronger set-aware encoders, decoders that respect manifold geometry, or objectives that directly penalize wrong code predictions rather than just mismatched distances.
+
+
+## Proposed Improvements: Fixing the Four Fatal Culprits
+
+Our initial experiments revealed four fundamental limitations that prevented hyperbolic embeddings from outperforming Euclidean ones, despite near-perfect hierarchical alignment:
+
+1. **Decoder expressivity** – a tiny Euclidean MLP could not invert heavily-regularized, curved hyperbolic latents.  
+2. **Encoder non-invertibility** – mean pooling in tangent space irreversibly discarded set structure.  
+3. **Objective mismatch** – smooth geometric regularizers (tree-pair, radius–depth, HDD/HGD) dominated the discrete reconstruction signal.  
+4. **Depth-induced collapse** – radius–depth regularization forced deep leaves onto identical shells, destroying distinguishability.
+
+The final architecture eliminates **all four** culprits simultaneously.
+
+### Architecture Evolution
+
+| Component               | Original Implementation (Failed)                              | Final Euclidean Baseline                     | Final Hyperbolic Model                                                                 |
+|-------------------------|----------------------------------------------------------------|--------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
+| **Code Embedding**      | Euclidean `nn.Embedding` **or** Hyperbolic (geoopt)           | Euclidean `nn.Embedding`                                                | Hyperbolic Poincaré ball (`geoopt.ManifoldParameter`, c=1.0)                                        |
+| **Visit Encoder**       | Mean pooling in tangent space (culprit 2)                     | Learnable attention pooling + residual MLPs                             | **Einstein midpoint** (hyperbolic barycenter) → tangent vector at origin<br>*Mathieu et al., 2019 [Poincaré Embeddings]; Ganea et al., 2018 [Hyperbolic Neural Networks]* |
+| **Generative Process**  | DDPM with Möbius-approximated noise                           | Rectified Flow in Euclidean space (velocity prediction)                | **Rectified Flow in tangent space at origin** (exact geodesics on the manifold)<br>*Liu et al., 2023 [Flow Straight and Fast]; Liu et al., 2024 [Rectified Flow]* |
+| **Latent Space**        | Mixed (hyperbolic embedding → Euclidean latents)             | Pure Euclidean                                                          | Pure hyperbolic (all operations in tangent space, straight lines = geodesics)                     |
+| **Decoder**             | 2-layer Euclidean MLP (culprit 1)                             | Deep residual MLP (4–6 blocks, hidden=512)                              | **Hyperbolic distance decoder**: `logits = –dist²(v_visit, z_code)` + tiny hyperbolic linear layer + temperature annealing<br>*Nickel & Kiela, 2018 [Poincaré Gloves]; Shimizu et al., 2021 [Hyperbolic Discriminative]* |
+| **Reconstruction Loss** | BCE-with-logits (overwhelmed by geometry losses)             | BCE or Focal loss                                                       | **Focal loss** (γ=2.0) + λ_recon = 1000–2000 (culprit 3 fixed)<br>*Lin et al., 2017 [Focal Loss]* |
+| **Geometric Regularizers** | Tree-pair + radius–depth + HDD/HGD (culprit 3 & 4)          | Tree-pair only (light)                                                  | **None or only very light tree-pair** – radius–depth completely removed (culprit 4 eliminated)    |
+| **Temperature**         | None                                                          | None                                                                    | Exponential annealing 1.0 → 0.07 (prevents early collapse)                                         |
+| **Frequency Bias**      | None                                                          | None                                                                    | Optional log-frequency bias on rare codes                                         |
+
+### How Each Culprit Was Eliminated
+
+| Culprit                     | Original Problem                                      | Final Fix                                                                                     | 
+|-----------------------------|--------------------------------------------------------|-----------------------------------------------------------------------------------------------|
+| 1. Decoder expressivity     | Euclidean MLP couldn’t invert curved latents          | Hyperbolic distance decoder + tiny Möbius linear layer                                        | 
+| 2. Encoder non-invertibility| Mean pooling lost combinatorial information           | Einstein midpoint preserves set geometry in a reversible way                                 | 
+| 3. Objective mismatch       | Geometry losses crushed discrete signal               | λ_recon = 1000+, focal loss, radius loss killed                                               | 
+| 4. Depth-induced collapse   | Radius–depth forced leaves to same shell              | **Radius–depth regularization completely removed**                                           | 
