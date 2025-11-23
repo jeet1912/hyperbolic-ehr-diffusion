@@ -103,10 +103,17 @@ def sample_trajectories(
         visit_mask = torch.ones(num_samples, max_len, dtype=torch.bool, device=device)
 
         dt = 1.0 / num_steps
+        # In sample_trajectories(), inside the step loop:
         for step in range(num_steps):
             t = torch.full((num_samples,), step * dt, device=device)
             v = velocity_model(x_t, t, visit_mask)
             x_t = x_t + v * dt
+
+            # PROJECT BACK TO TANGENT SPACE EVERY FEW STEPS
+            if embeddingType == "hyperbolic" and step % 3 == 0:
+                with torch.no_grad():
+                    x_manifold = manifold.expmap0(x_t)
+                    x_t = manifold.logmap0(x_manifold)
 
         x_final = x_t  # remain in tangent space
         logits = visit_dec(x_final)                                     # [B, L, C]
@@ -150,7 +157,10 @@ def compute_batch_loss(
 
     pad_idx = len(hier.codes)
     targets = torch.zeros_like(logits)
-    for idx, visit in enumerate(flat_visits):
+    visit_mask_flat = visit_mask.view(-1)
+    for idx, (visit, is_real) in enumerate(zip(flat_visits, visit_mask_flat)):
+        if not bool(is_real.item()):
+            continue
         valid_codes = visit[visit != pad_idx].long()
         if valid_codes.numel() > 0:
             targets[idx, valid_codes] = 1.0
@@ -199,9 +209,13 @@ def train_model(
     embedding_type, codes_per_visit,
     lambda_recon=1000.0, n_epochs=300, plot_dir="results/plots", tag="archFix"
 ):
-    params = list(velocity_model.parameters()) + list(visit_dec.parameters())
-    if embedding_type == "hyperbolic":
-        params += list(code_emb.parameters())
+    params = (list(velocity_model.parameters())
+            + list(visit_enc.parameters())
+            + list(visit_dec.parameters())
+            + list(code_emb.parameters())
+        )
+    optimizer = torch.optim.AdamW(params, lr=3e-4, weight_decay=1e-5)
+
     optimizer = torch.optim.AdamW(params, lr=3e-4, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs)
 
@@ -219,9 +233,13 @@ def train_model(
                              lambda_recon, optimizer=None)
 
         scheduler.step()
-        update_temperature(visit_dec, epoch, total_epochs=n_epochs)
+        if embedding_type == "hyperbolic":
+            update_temperature(visit_dec, epoch, total_epochs=n_epochs)
 
-        print(f"Epoch {epoch:3d} | Train {train_loss:.5f} | Val {val_loss:.5f}")
+        print(
+            f"Epoch {epoch:3d} | Train {train_loss:.5f} | Val {val_loss:.5f} "
+            f"| lambda_recon={lambda_recon}"
+        )
         train_losses.append(train_loss)
         val_losses.append(val_loss)
 
@@ -380,39 +398,61 @@ def main(
     velocity_model = TrajectoryVelocityModel(dim=dim, n_layers=6, n_heads=8, ff_dim=1024).to(device)
     codes_per_visit = 4
 
-    print(f"\nTraining {embeddingType.upper()} | Depth {hier.max_depth} ")
-    best_val = train_model(
-        velocity_model, code_emb, visit_enc, visit_dec,
-        train_dl, val_dl, hier, device,
-        embedding_type=embeddingType,
-        codes_per_visit=codes_per_visit,
-        n_epochs=350,
-        plot_dir=os.path.join("results", "plots"),
-        tag=f"{experiment_name}_{embeddingType}"
-    )
-    print(f"Best validation loss: {best_val:.6f}")
-    print("Saved loss curves to results/plots")
+    lambda_recon_values = [1.0, 10.0, 100.0, 1000.0]
+    results = []
+    for lambda_recon in lambda_recon_values:
+        if embeddingType == "euclidean":
+            code_emb = EuclideanCodeEmbedding(num_codes=len(hier.codes) + 1, dim=dim).to(device)
+            visit_enc = LearnableVisitEncoder(code_emb, dim=dim, pad_idx=pad_idx,
+                                              hidden_dim=256, use_attention=True).to(device)
+            visit_dec = StrongVisitDecoder(dim=dim, num_codes=len(hier.codes),
+                                           hidden_dim=512, num_res_blocks=6).to(device)
+        else:
+            code_emb = HyperbolicCodeEmbedding(num_codes=len(hier.codes) + 1, dim=dim, c=1.0).to(device)
+            visit_enc = HyperbolicVisitEncoder(code_emb, pad_idx=pad_idx).to(device)
+            freq = compute_code_frequency(train_trajs, len(hier.codes), device)
+            visit_dec = HyperbolicDistanceDecoder(
+                code_embedding=code_emb.emb,
+                manifold=code_emb.manifold,
+                code_freq=freq
+            ).to(device)
 
-    # Evaluation 
-    test_recall = evaluate_test_accuracy(
-        test_dl, velocity_model, visit_enc, visit_dec, code_emb,
-        max_len, dim, device, embeddingType, codes_per_visit, pad_idx
-    )
-    print(f"Test Recall@{codes_per_visit}: {test_recall:.4f}")
+        velocity_model = TrajectoryVelocityModel(dim=dim, n_layers=6, n_heads=8, ff_dim=1024).to(device)
 
-    synthetic = sample_trajectories(
-        velocity_model, code_emb, visit_enc, visit_dec, hier,
-        max_len, dim, num_samples=1000, embeddingType=embeddingType,
-        device=device, codes_per_visit=codes_per_visit, num_steps=15
-    )
+        print(f"\nTraining {embeddingType.upper()} | Depth {hier.max_depth} | lambda_recon={lambda_recon}")
+        best_val = train_model(
+            velocity_model, code_emb, visit_enc, visit_dec,
+            train_dl, val_dl, hier, device,
+            embedding_type=embeddingType,
+            codes_per_visit=codes_per_visit,
+            lambda_recon=lambda_recon,
+            n_epochs=350,
+            plot_dir=os.path.join("results", "plots"),
+            tag=f"{experiment_name}_{embeddingType}_lrecon{int(lambda_recon)}"
+        )
+        print(f"Best validation loss (lambda_recon={lambda_recon}): {best_val:.6f}")
+        print("Saved loss curves to results/plots")
 
-    corr = correlation_tree_vs_embedding(code_emb, hier, device)
-    print(f"Tree-Embedding Correlation: {corr:.4f}")
+        test_recall = evaluate_test_accuracy(
+            test_dl, velocity_model, visit_enc, visit_dec, code_emb,
+            max_len, dim, device, embeddingType, codes_per_visit, pad_idx
+        )
+        print(f"Test Recall@{codes_per_visit} (lambda_recon={lambda_recon}): {test_recall:.4f}")
 
-    stats = traj_stats(synthetic, hier)
-    print(f"Synthetic ({embeddingType}) stats (N={len(synthetic)}): {stats}")
+        synthetic = sample_trajectories(
+            velocity_model, code_emb, visit_enc, visit_dec, hier,
+            max_len, dim, num_samples=1000, embeddingType=embeddingType,
+            device=device, codes_per_visit=codes_per_visit, num_steps=15
+        )
 
-    return test_recall
+        corr = correlation_tree_vs_embedding(code_emb, hier, device)
+        print(f"Tree-Embedding Correlation (lambda_recon={lambda_recon}): {corr:.4f}")
+
+        stats = traj_stats(synthetic, hier)
+        print(f"Synthetic ({embeddingType}, lambda_recon={lambda_recon}) stats (N={len(synthetic)}): {stats}")
+        results.append((lambda_recon, best_val, test_recall, corr))
+
+    return results
 
 
 # Run exactly like before 
@@ -433,4 +473,9 @@ if __name__ == "__main__":
         print(f"\n{name} | max_depth = {hier.max_depth} | Real stats: {real_stats}")
         for emb in ["euclidean", "hyperbolic"]:
             print(f"\n--- Running {emb} ---")
-            main(embeddingType=emb, traj_splits=splits, hier=hier, experiment_name=name)
+            results = main(embeddingType=emb, traj_splits=splits, hier=hier, experiment_name=name)
+            for lambda_recon, best_val, test_recall, corr in results:
+                print(
+                    f"[Summary] {name} | {emb} | lambda_recon={lambda_recon}: "
+                    f"best_val={best_val:.6f}, test_recall={test_recall:.4f}, corr={corr:.4f}"
+                )
