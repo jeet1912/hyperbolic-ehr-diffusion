@@ -58,7 +58,11 @@ class TrajectoryVelocityModel(nn.Module):
             batch_first=True,
             norm_first=True
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=n_layers,
+            enable_nested_tensor=False,
+        )
 
         # Final projection to velocity
         self.velocity_head = nn.Sequential(
