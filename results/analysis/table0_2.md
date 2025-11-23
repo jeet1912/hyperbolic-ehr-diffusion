@@ -64,7 +64,6 @@ Sample trajectory (euclidean) 3:
   Visit 6: ['C204', 'C413', 'C44', 'C442']
 Correlation(tree_dist, euclidean_embedding_dist) = 0.0483
 
-Synthetic (euclidean) stats (N=1000): {'mean_depth': 1.6091666666666666, 'std_depth': 0.4890459817054243, 'mean_tree_dist': 2.572414380644062, 'std_tree_dist': 1.143962936121926, 'mean_root_purity': 0.60025, 'std_root_purity': 0.16147735909408475}
 
 ### Experiment depth2_base_w/DecHypNoise | depth 2 | hyperbolic | regularization=on
 ![Train loss](../plots/forTable0_2/depth2_base_w-DecHypNoise_depth2_hyperbolic_dim16_layers4_T1000_regon_lt0p01_lr0p003_train.png)
@@ -98,7 +97,6 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C03', 'C04', 'C30', 'C42']
 Correlation(tree_dist, hyperbolic_embedding_dist) = 0.9879
 
-Synthetic (hyperbolic) stats (N=1000): {'mean_depth': 1.0, 'std_depth': 0.0, 'mean_tree_dist': 2.0, 'std_tree_dist': 0.0, 'mean_root_purity': 0.376125, 'std_root_purity': 0.12499493739748024}
 
 ### Experiment depth2_base_w/DecHypNoise | depth 2 | euclidean | regularization=on
 ![Train loss](../plots/forTable0_2/depth2_base_w-DecHypNoise_depth2_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_train.png)
@@ -132,8 +130,6 @@ Sample trajectory (euclidean) 3:
   Visit 6: ['C140', 'C221', 'C402', 'C422']
 Correlation(tree_dist, euclidean_embedding_dist) = 0.5077
 
-Synthetic (euclidean) stats (N=1000): {'mean_depth': 1.6279166666666667, 'std_depth': 0.5250910965939359, 'mean_tree_dist': 2.4264346764346763, 'std_tree_dist': 1.2214926895503617, 'mean_root_purity': 0.5520833333333334, 'std_root_purity': 0.16309453206312247}
-
 ### Experiment depth7_extended_w/DecHypNoise | depth 7 | hyperbolic | regularization=off
 ![Train loss](../plots/forTable0_2/depth7_extended_wDecHypNoise_depth7_hyperbolic_dim16_layers4_T1000_regoff_lt0_lr0_train.png)
 ![Val loss](../plots/forTable0_2/depth7_extended_wDecHypNoise_depth7_hyperbolic_dim16_layers4_T1000_regoff_lt0_lr0_val.png)
@@ -166,7 +162,6 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C121d3', 'C411d3', 'C420d3', 'C441d4']
 Correlation(tree_dist, hyperbolic_embedding_dist) = -0.0415
 
-Synthetic (hyperbolic) stats (N=1000): {'mean_depth': 5.261375, 'std_depth': 1.6341077410547322, 'mean_tree_dist': 12.655878467635404, 'std_tree_dist': 0.4750809439744333, 'mean_root_purity': 0.504375, 'std_root_purity': 0.24687974678980854}
 
 ### Experiment depth7_extended_w/DecHypNoise | depth 7 | euclidean | regularization=off
 ![Train loss](../plots/forTable0_2/depth7_extended_wDecHypNoise_depth7_euclidean_dim16_layers4_T1000_regoff_lt0_lr0_train.png)
@@ -200,7 +195,6 @@ Sample trajectory (euclidean) 3:
   Visit 6: ['C004d3', 'C021d4', 'C334d3', 'C334d4']
 Correlation(tree_dist, euclidean_embedding_dist) = -0.0843
 
-Synthetic (euclidean) stats (N=1000): {'mean_depth': 6.471375, 'std_depth': 0.49917993687146517, 'mean_tree_dist': 5.385145050231403, 'std_tree_dist': 5.733773465551494, 'mean_root_purity': 0.5239583333333333, 'std_root_purity': 0.10810372301893932}
 
 ### Experiment depth7_extended_w/DecHypNoise | depth 7 | hyperbolic | regularization=on
 ![Train loss](../plots/forTable0_2/depth7_extended_wDecHypNoise_depth7_hyperbolic_dim16_layers4_T1000_regon_lt0p01_lr0p003_train.png)
@@ -234,8 +228,6 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C110d4', 'C114d4', 'C204d4', 'C402d4']
 Correlation(tree_dist, hyperbolic_embedding_dist) = 0.9725
 
-Synthetic (hyperbolic) stats (N=1000): {'mean_depth': 6.7491666666666665, 'std_depth': 0.4334927591347083, 'mean_tree_dist': 13.001663893510816, 'std_tree_dist': 0.7065163017956323, 'mean_root_purity': 0.6254166666666666, 'std_root_purity': 0.12499930555362654}
-
 ### Experiment depth7_extended_w/DecHypNoise | depth 7 | euclidean | regularization=on
 ![Train loss](../plots/forTable0_2/depth7_extended_wDecHypNoise_depth7_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_train.png)
 ![Val loss](../plots/forTable0_2/depth7_extended_wDecHypNoise_depth7_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_val.png)
@@ -268,8 +260,6 @@ Sample trajectory (euclidean) 3:
   Visit 6: ['C032d4', 'C223d3', 'C331d3', 'C331d4']
 Correlation(tree_dist, euclidean_embedding_dist) = 0.4818
 
-Synthetic (euclidean) stats (N=1000): {'mean_depth': 6.4267916666666665, 'std_depth': 0.49461150404186477, 'mean_tree_dist': 5.95960720793683, 'std_tree_dist': 5.609165149866249, 'mean_root_purity': 0.5315416666666667, 'std_root_purity': 0.11307684671889684}
-
 ## Comparison Table
 | Depth / Experiment | Source | Embedding | Reg | Mean depth | Depth std | Mean tree dist | Tree dist std | Mean root purity | Root purity std | Corr(tree, emb) | Best val loss | Test recall@4 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -285,6 +275,6 @@ Synthetic (euclidean) stats (N=1000): {'mean_depth': 6.4267916666666665, 'std_de
 | depth7_extended_w/DecHypNoise | Synthetic | euclidean | on | 6.4268 | 0.4946 | 5.9596 | 5.6092 | 0.5315 | 0.1131 | 0.4818 | 0.6308 | 0.1903 |
 
 ## Summary
-- **Shallow depth2_base_w/DecHypNoise:** Euclidean embeddings continue to dominate recall (0.22–0.24) while roughly matching the real depth statistics. Hyperbolic runs—especially with regularization—collapse to a single radius shell, giving nearly perfect tree-distance correlations (0.99) but little diversity and under 0.06 recall.
+- **Shallow depth2_base_w/DecHypNoise:** Euclidean embeddings continue to dominate recall (0.22–0.24) while roughly matching the real depth statistics. Hyperbolic runs,especially with regularization, collapse to a single radius shell, giving nearly perfect tree-distance correlations (0.99) but little diversity and under 0.06 recall.
 - **Deep depth7_extended_w/DecHypNoise:** All models struggle to reconstruct trajectories, yet Euclidean geometry still recovers the highest recall (0.19) albeit with poor hierarchy adherence (correlation ≤0.48). Hyperbolic models track hierarchical distance extremely well (0.97 correlation when regularized) but their decoder outputs degenerate two-code loops, limiting recall to ~0.01.
 - **Overall observation:** Injecting decoder noise helps neither geometry close the recall gap; instead it amplifies the trade-off, hyperbolic space captures hierarchy yet fails at discrete decoding, while Euclidean space sacrifices structural alignment for higher retrieval accuracy. Improving the decoder or adding diffusion-distance supervision is necessary to convert hyperbolic structure into usable predictions.
