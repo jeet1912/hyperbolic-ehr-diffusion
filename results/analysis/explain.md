@@ -518,15 +518,6 @@ The final architecture eliminates **all four** culprits simultaneously.
 | **Temperature**         | None                                                          | None                                                                    | Exponential annealing 1.0 → 0.07 (prevents early collapse)                                         |
 | **Frequency Bias**      | None                                                          | None                                                                    | Optional log-frequency bias on rare codes                                         |
 
-### How Each Culprit Was Eliminated
-
-| Culprit                     | Original Problem                                      | Final Fix                                                                                     | 
-|-----------------------------|--------------------------------------------------------|-----------------------------------------------------------------------------------------------|
-| 1. Decoder expressivity     | Euclidean MLP couldn’t invert curved latents          | Hyperbolic distance decoder + tiny Möbius linear layer                                        | 
-| 2. Encoder non-invertibility| Mean pooling lost combinatorial information           | Einstein midpoint preserves set geometry in a reversible way                                 | 
-| 3. Objective mismatch       | Geometry losses crushed discrete signal               | λ_recon = 1000+, focal loss, radius loss killed                                               | 
-| 4. Depth-induced collapse   | Radius–depth forced leaves to same shell              | **Radius–depth regularization completely removed**                                           |
-
 ## Equations in `train_toy_archFix{2,7}.py`
 
 The files `train_toy_archFix2.py` and `train_toy_archFix7.py` implement a **Rectified Flow** generative model instead of the DDPM used in earlier iterations. This approach learns a velocity field to transport the probability mass from a noise distribution to the data distribution along straight lines.
@@ -564,3 +555,23 @@ The model is trained jointly with a reconstruction objective to ensure the laten
 \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{flow}} + \lambda_{\text{recon}} \cdot \mathcal{L}_{\text{focal}}
 \]
 where $\mathcal{L}_{\text{focal}}$ is the Focal Loss computed on the decoder's logits compared to the ground-truth multi-hot code vectors.
+
+#### Comparison with `train_toyWithDecHypNoise.py`
+
+The architecture in `train_toy_archFix{2,7}.py` (Rectified Flow) differs significantly from the earlier `train_toyWithDecHypNoise.py` (Hyperbolic DDPM).
+
+**1. Generative Paradigm:**
+- **Hyperbolic DDPM (`train_toyWithDecHypNoise.py`):** Uses a standard denoising diffusion framework where noise is added via a curved, hyperbolic forward process (Möbius addition). The model predicts the noise term $\epsilon$.
+- **Rectified Flow (`train_toy_archFix{2,7}.py`):** Defines a straight-line probability flow between noise and data in the tangent space (at the origin). The model predicts the **velocity** vector $v = X_1 - X_0$.
+
+**2. Geometry Integration:**
+- **Hyperbolic DDPM:** Explicitly computes diffusion steps on the manifold using `expmap0` and `logmap0` for every forward/reverse step.
+- **Rectified Flow:** Operates primarily in the tangent space (which is Euclidean-like). Hyperbolic constraints are enforced via a **stabilization step** (projecting back to the tangent space) during sampling, rather than being intrinsic to the flow equation itself.
+
+**3. Loss Function:**
+- **Hyperbolic DDPM:** Optimizes $\mathcal{L}_{\text{noise}} = \|\epsilon - \hat{\epsilon}\|_2^2$ plus extensive geometric regularizers (radius-depth, tree-pair distance) and a BCE reconstruction loss.
+- **Rectified Flow:** Optimizes $\mathcal{L}_{\text{flow}} = \|v_{\text{pred}} - v_{\text{target}}\|_2^2$ plus a **Focal Loss** for reconstruction. The geometric regularizers (like radius-depth) are largely removed to prevent collapse, relying instead on the flow matching objective and focal loss to shape the space.
+
+**4. Decoder & Visit Collator:**
+- **Hyperbolic DDPM:** Uses a simpler `VisitDecoder` with standard BCE loss.
+- **Rectified Flow:** Uses a stronger decoder (`StrongVisitDecoder` or `HyperbolicDistanceDecoder`) with **Focal Loss** to handle class imbalance better. It also employs a dedicated `VisitCollator` to handle batching more efficiently.
