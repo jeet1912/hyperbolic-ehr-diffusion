@@ -11,7 +11,7 @@ from data_icd_toy import ToyICDHierarchy, sample_toy_trajectories
 from hyperbolic_embeddings import HyperbolicCodeEmbedding, VisitEncoder
 from euclidean_embeddings import EuclideanCodeEmbedding, EuclideanVisitEncoder
 from diffusion import cosine_beta_schedule
-from traj_model import TrajectoryEpsModel
+from traj_models import TrajectoryEpsModel
 from metrics_toy import traj_stats
 from data_utils import TrajDataset, make_collate_fn, build_visit_tensor
 from geometry_utils import code_pair_loss
