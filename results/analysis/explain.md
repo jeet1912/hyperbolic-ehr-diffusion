@@ -525,4 +525,42 @@ The final architecture eliminates **all four** culprits simultaneously.
 | 1. Decoder expressivity     | Euclidean MLP couldn’t invert curved latents          | Hyperbolic distance decoder + tiny Möbius linear layer                                        | 
 | 2. Encoder non-invertibility| Mean pooling lost combinatorial information           | Einstein midpoint preserves set geometry in a reversible way                                 | 
 | 3. Objective mismatch       | Geometry losses crushed discrete signal               | λ_recon = 1000+, focal loss, radius loss killed                                               | 
-| 4. Depth-induced collapse   | Radius–depth forced leaves to same shell              | **Radius–depth regularization completely removed**                                           | 
+| 4. Depth-induced collapse   | Radius–depth forced leaves to same shell              | **Radius–depth regularization completely removed**                                           |
+
+## Equations in `train_toy_archFix{2,7}.py`
+
+The files `train_toy_archFix2.py` and `train_toy_archFix7.py` implement a **Rectified Flow** generative model instead of the DDPM used in earlier iterations. This approach learns a velocity field to transport the probability mass from a noise distribution to the data distribution along straight lines.
+
+#### 1. Rectified Flow Interpolation
+For a data sample $X_1$ (latent visit representation) and a noise sample $X_0 \sim \mathcal{N}(0, I)$, we define a linear interpolation path $X_t$ for $t \in [0, 1]$:
+\[
+X_t = (1 - t) X_0 + t X_1
+\]
+The time derivative (velocity) of this path is constant:
+\[
+\frac{dX_t}{dt} = X_1 - X_0
+\]
+
+#### 2. Flow Matching Loss
+The velocity model $v_\theta(X_t, t)$ is trained to predict this target velocity. The loss function is the mean squared error (MSE):
+\[
+\mathcal{L}_{\text{flow}} = \| v_\theta(X_t, t) - (X_1 - X_0) \|^2
+\]
+This encourages the vector field to follow the straight paths connecting noise to data.
+
+#### 3. Sampling via Euler Integration
+To generate samples, we start with $x_0 \sim \mathcal{N}(0, I)$ and numerically integrate the predicted velocity field over $N$ steps (with step size $\Delta t = 1/N$):
+\[
+x_{t+\Delta t} = x_t + v_\theta(x_t, t) \cdot \Delta t
+\]
+For hyperbolic embeddings, the code includes a stabilization step every few iterations to ensure the tangent vector $x_t$ remains consistent with the manifold geometry (projecting via exponential and logarithmic maps at the origin):
+\[
+x_t \leftarrow \log_0(\exp_0(x_t))
+\]
+
+#### 4. Total Training Objective
+The model is trained jointly with a reconstruction objective to ensure the latent space retains semantic information. The total loss is:
+\[
+\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{flow}} + \lambda_{\text{recon}} \cdot \mathcal{L}_{\text{focal}}
+\]
+where $\mathcal{L}_{\text{focal}}$ is the Focal Loss computed on the decoder's logits compared to the ground-truth multi-hot code vectors.
