@@ -18,9 +18,9 @@ Returns node depth $d(c)$ read from NetworkX attributes.
 #### `tree_distance(c_1, c_2)`
 
 Uses undirected shortest path length
-\[
+$$
 d_{\text{tree}}(c_1,c_2) = \text{length of shortest path in } G^{\text{undirected}}
-\]
+$$
 If no path exists, returns `None`.
 
 #### `sample_toy_trajectories`
@@ -31,9 +31,9 @@ Generates $N$ patient trajectories. For each patient:
 2. Sample cluster leaf $\ell$ and define $\mathcal{C}=\{\ell\}\cup\text{Ancestors}(\ell)$.
 3. For each visit, sample visit length $K \sim \mathcal{U}(\text{min}_{\text{codes}}, \text{max}_{\text{codes}})$.
 4. While visit codes < $K$, draw code $c$ via mixture distribution
-   \[
+   $$
    P(c) = 0.7\,\mathcal{U}(\mathcal{C}) + 0.3\,\mathcal{U}(V)
-   \]
+   $$
    Insert $\text{idx}(c)$ into visit list.
 
 - Output: list of trajectories, each being a list of visits (sorted integer indices).
@@ -54,9 +54,9 @@ Draws `hier.G` using the computed positions and saves PNG files.
 Implements the cosine DDPM schedule from Nichol & Dhariwal (2021).
 
 Define $x = 0,\dots,T$ and cumulative alphas
-\[
+$$
 \bar{\alpha}_t = \frac{\cos^2\left(\frac{t/T + s}{1+s}\cdot\frac{\pi}{2}\right)}{\cos^2(s \cdot \frac{\pi}{2(1+s)})}
-\]
+$$
 Then per-step $\beta_t = 1 - \bar{\alpha}_{t+1}/\bar{\alpha}_t$. Clamp to $[10^{-5}, 0.999]$.
 
 #### `TimeEmbedding`
@@ -77,12 +77,12 @@ Learnable matrix $E\in\mathbb{R}^{(|V|+1)\times d}$. Forward map: `code_ids -> E
 #### `EuclideanVisitEncoder`
 
 For each visit tensor $s$, remove pad index `pad_idx`, embed codes, and mean-pool:
-\[
+$$
 v = \begin{cases}
 \frac{1}{|s|} \sum_{i \in s} E_i & |s|>0\\
 0 & |s|=0
 \end{cases}
-\]
+$$
 Stack into `torch.stack` output of shape `[B*T, d]`.
 
 
@@ -184,11 +184,11 @@ Correlation-inspired regularizer:
 2. Compute tree distance $d_{\text{tree}}(i,j)$.
 3. Compute embedding distance $d_{\text{emb}}(i,j)$: hyperbolic geodesic or Euclidean norm.
 4. Normalize both via z-score, minimize MSE:
-   \[
+   $$
    \hat{d}_{\text{tree}} = \frac{d_{\text{tree}} - \mu_t}{\sigma_t},\quad
    \hat{d}_{\text{emb}} = \frac{d_{\text{emb}} - \mu_e}{\sigma_e},\quad
    \mathcal{L}_{\text{pair}} = \| \hat{d}_{\text{emb}} - \hat{d}_{\text{tree}} \|_2^2
-   \]
+   $$
    aligning manifold distances with the discrete hierarchy metric.
 
 #### `sample_fake_visit_indices`
@@ -196,22 +196,22 @@ Correlation-inspired regularizer:
 - Sample random noise $x_t \sim \mathcal{N}(0,I)$.
 - Random timesteps $t$.
 - Predict $x_0$ using $\hat{\epsilon}$ formula:
-  \[
+  $$
   \hat{x}_0 = \frac{x_t - \sqrt{1-\bar{\alpha}_t}\,\hat{\epsilon}}{\sqrt{\bar{\alpha}_t}}
-  \]
+  $$
 - Decode to code indices for quick inspection.
 
 #### `sample_trajectories`
 
 Implements reverse DDPM sampling. Iteratively for $t=T-1 \dots 0$:
-\[
+$$
 \mu_t = \frac{1}{\sqrt{\alpha_t}}\left(x_t - \frac{1-\alpha_t}{\sqrt{1-\bar{\alpha}_t}} \hat{\epsilon}_t \right),
 \qquad x_{t-1} =
 \begin{cases}
 \mu_t + \sqrt{\tilde{\beta}_t} z, & t>0\\
 \mu_t, & t=0
 \end{cases}
-\]
+$$
 Finally decode visits and print a few sample trajectories.
 
 #### `split_trajectories`
@@ -270,9 +270,9 @@ Saves training/validation loss PNGs with metadata tags.
 #### `correlation_tree_vs_embedding`
 
 Monte Carlo Pearson correlation between tree distances and embedding distances. For sampled pairs $(i,j)$:
-\[
+$$
 \text{corr} = \frac{\text{Cov}(d_{\text{tree}}, d_{\text{emb}})}{\sigma(d_{\text{tree}})\,\sigma(d_{\text{emb}})}
-\]
+$$
 where $d_{\text{emb}}$ uses hyperbolic geodesic length or Euclidean norm. High correlation indicates the embedding geometry preserves the ontology structure.
 
 #### `main`
@@ -311,33 +311,33 @@ After the narrative summary I keep a running log of every architectural or loss 
 
 ### Baseline context
 
-In `train_toy.py` I train a DDPM over visit vectors \(x_0\) that come from mean-pooled code embeddings. The only geometry-aware terms act directly on the *code* embeddings (tree/radius regularizers). Decoding is still a heuristic nearest-neighbor lookup from latent visits back to codes. Every variant below changes one of three ingredients: how I decode, how I inject noise (Euclidean vs. hyperbolic), and how I constrain the embedding geometry (HDD/HGD). I list them in the order I built them.
+In `train_toy.py` I train a DDPM over visit vectors $x_0$ that come from mean-pooled code embeddings. The only geometry-aware terms act directly on the *code* embeddings (tree/radius regularizers). Decoding is still a heuristic nearest-neighbor lookup from latent visits back to codes. Every variant below changes one of three ingredients: how I decode, how I inject noise (Euclidean vs. hyperbolic), and how I constrain the embedding geometry (HDD/HGD). I list them in the order I built them.
 
 ### 1. Adding a Learnable Visit Decoder (`train_toyWithDecoder.py`)
 
 Here I insert a parametric visit decoder so I can reconstruct code sets with an actual supervised loss instead of relying on nearest neighbors. (VisitDecoder)
 
-- **Input:** visit latents \(v\in\mathbb{R}^d\) (from encoder or DDPM).
-- **Output:** logits over true codes (no pad token), shape \([B,L,C]\).
+- **Input:** visit latents $v\in\mathbb{R}^d$ (from encoder or DDPM).
+- **Output:** logits over true codes (no pad token), shape $[B,L,C]$.
 - **Usage:** multi-label prediction because each visit contains a *set* of ICD codes.
 
-**Reconstruction loss.** For each batch I encode visits into \(x_0\in\mathbb{R}^{B\times L\times d}\), sample \(t,\epsilon\), and form
-\[
+**Reconstruction loss.** For each batch I encode visits into $x_0\in\mathbb{R}^{B\times L\times d}$, sample $t,\epsilon$, and form
+$$
 x_t=\sqrt{\bar{\alpha}_t}\,x_0+\sqrt{1-\bar{\alpha}_t}\,\epsilon,\qquad
 \hat{x}_0=\frac{x_t-\sqrt{1-\bar{\alpha}_t}\,\hat{\epsilon}(x_t,t)}{\sqrt{\bar{\alpha}_t}}.
-\]
-Multi-hot targets \(y\in\{0,1\}^{B\times L\times C}\) come from ground-truth visits. I decode both \(x_0\) and \(\hat{x}_0\) and apply BCE-with-logits:
-\[
+$$
+Multi-hot targets $y\in\{0,1\}^{B\times L\times C}$ come from ground-truth visits. I decode both $x_0$ and $\hat{x}_0$ and apply BCE-with-logits:
+$$
 \mathcal{L}_{\text{recon}}=\operatorname{BCE}(f_{\text{dec}}(x_0),y)+\operatorname{BCE}(f_{\text{dec}}(\hat{x}_0),y).
-\]
+$$
 
 **Total loss.**
-\[
+$$
 \mathcal{L}=\mathbb{E}\| \epsilon-\hat{\epsilon}(x_t,t)\|_2^2
 +\lambda_{\text{tree}}\mathcal{L}_{\text{pair}}
 +\lambda_{\text{radius}}\mathcal{L}_{\text{radius}}
 +\lambda_{\text{recon}}\mathcal{L}_{\text{recon}}.
-\]
+$$
 Now the model is explicitly penalized when decoded codes do not match the original visit.
 
 **Sketch**
@@ -361,14 +361,14 @@ In this setting, each visit contains a set of ICD codes, and the decoder must pr
 
 I keep the VisitDecoder but make the forward noising process respect hyperbolic geometry whenever the embedding is hyperbolic.
 
-- Treat \(x_0\) as tangent vectors at the origin.
-- Map both \(x_0\) and \(\epsilon\) onto the manifold via `manifold.expmap0`.
+- Treat $x_0$ as tangent vectors at the origin.
+- Map both $x_0$ and $\epsilon$ onto the manifold via `manifold.expmap0`.
 - Use Möbius scalar multiplication and addition to approximate
-  \[
+  $$
   x_t \approx \sqrt{\bar{\alpha}_t}\otimes x_0 \;\oplus\; \sqrt{1-\bar{\alpha}_t}\otimes \epsilon.
-  \]
+  $$
 - Reverse step stays in the tangent space but forward path travels along geodesics. Euclidean embeddings still use standard Gaussian noise.
-- Reconstruction loss remains the same BCE on decoded logits from \(x_0\) and \(\hat{x}_0\).
+- Reconstruction loss remains the same BCE on decoded logits from $x_0$ and $\hat{x}_0$.
 
 **Sketch**
 
@@ -387,23 +387,23 @@ codes --[Hyperbolic embedding B_c^d]--> VisitEncoder (logmap0 + mean) --> x0 (ta
 
 I keep the hyperbolic noise + decoder setup and add an HDD loss inspired by diffusion distances on the ICD graph.
 
-- Build Laplacian \(L = D - A\) from the ICD tree and precompute \(\Phi_{t_k}=\exp(-t_k L)\).
-- Stack/normalize to get diffusion embeddings \(\phi(i)\) for each code and define
-  \[
+- Build Laplacian $L = D - A$ from the ICD tree and precompute $\Phi_{t_k}=\exp(-t_k L)$.
+- Stack/normalize to get diffusion embeddings $\phi(i)$ for each code and define
+  $$
   d_{\text{HDD}}(i,j)=\|\phi(i)-\phi(j)\|_2.
-  \]
+  $$
 - HDD loss:
-  \[
+  $$
   \mathcal{L}_{\text{HDD}}=\mathbb{E}_{i,j}\big[(d_{\text{emb}}(i,j)-d_{\text{HDD}}(i,j))^2\big].
-  \]
+  $$
 - Total loss becomes
-  \[
+  $$
   \mathcal{L}=\mathcal{L}_{\epsilon}
   +\lambda_{\text{tree}}\mathcal{L}_{\text{pair}}
   +\lambda_{\text{radius}}\mathcal{L}_{\text{radius}}
   +\lambda_{\text{recon}}\mathcal{L}_{\text{recon}}
   +\lambda_{\text{HDD}}\mathcal{L}_{\text{HDD}}.
-  \]
+  $$
 
 **Sketch**
 
@@ -419,21 +419,21 @@ codes --> code_emb (hyperbolic/Euclid) --> VisitEncoder --> DDPM --> VisitDecode
 
 ### 4. Hyperbolic Graph Diffusion (HGD) Regularizer (`train_toy_hgd.py`)
 
-Next I added the HGD idea: use a diffusion kernel \(K_t=\exp(-tL)\) to align manifold distances with graph diffusion similarities.
+Next I added the HGD idea: use a diffusion kernel $K_t=\exp(-tL)$ to align manifold distances with graph diffusion similarities.
 
-- Convert \(K_t\) to a similarity/distance \(s_t(i,j)\).
+- Convert $K_t$ to a similarity/distance $s_t(i,j)$.
 - Loss:
-  \[
+  $$
   \mathcal{L}_{\text{HGD}}=\mathbb{E}_{i,j}\big[(d_{\text{emb}}(i,j)-s_t(i,j))^2\big].
-  \]
+  $$
 - Objective:
-  \[
+  $$
   \mathcal{L}=\mathcal{L}_{\epsilon}
   +\lambda_{\text{recon}}\mathcal{L}_{\text{recon}}
   +\lambda_{\text{tree}}\mathcal{L}_{\text{pair}}
   +\lambda_{\text{radius}}\mathcal{L}_{\text{radius}}
   +\lambda_{\text{HGD}}\mathcal{L}_{\text{HGD}}.
-  \]
+  $$
 
 **Sketch**
 
@@ -450,13 +450,13 @@ codes --> embeddings --> VisitEncoder --> DDPM (hyperbolic noise when needed)
 ### 5. Combined HDD + HGD (`train_toy_hdd_hgd.py`)
 
 Finally I stacked both graph-based regularizers on top of the prior losses:
-\[
+$$
 \mathcal{L}=\mathcal{L}_{\epsilon}+\lambda_{\text{recon}}\mathcal{L}_{\text{recon}}
 +\lambda_{\text{tree}}\mathcal{L}_{\text{pair}}
 +\lambda_{\text{radius}}\mathcal{L}_{\text{radius}}
 +\lambda_{\text{HDD}}\mathcal{L}_{\text{HDD}}
 +\lambda_{\text{HGD}}\mathcal{L}_{\text{HGD}}.
-\]
+$$
 
 **Sketch**
 
@@ -520,9 +520,63 @@ The final architecture eliminates **all four** culprits simultaneously.
 
 ### How Each Culprit Was Eliminated
 
-| Culprit                     | Original Problem                                      | Final Fix                                                                                     | 
+| Culprit                     | Original Problem                                      | Final Fix                                                                                     |
 |-----------------------------|--------------------------------------------------------|-----------------------------------------------------------------------------------------------|
-| 1. Decoder expressivity     | Euclidean MLP couldn’t invert curved latents          | Hyperbolic distance decoder + tiny Möbius linear layer                                        | 
-| 2. Encoder non-invertibility| Mean pooling lost combinatorial information           | Einstein midpoint preserves set geometry in a reversible way                                 | 
-| 3. Objective mismatch       | Geometry losses crushed discrete signal               | λ_recon = 1000+, focal loss, radius loss killed                                               | 
-| 4. Depth-induced collapse   | Radius–depth forced leaves to same shell              | **Radius–depth regularization completely removed**                                           | 
+| 1. Decoder expressivity     | Euclidean MLP couldn’t invert curved latents          | Hyperbolic distance decoder + tiny Möbius linear layer                                        |
+| 2. Encoder non-invertibility| Mean pooling lost combinatorial information           | Einstein midpoint preserves set geometry in a reversible way                                 |
+| 3. Objective mismatch       | Geometry losses crushed discrete signal               | λ_recon = 1000+, focal loss, radius loss killed                                               |
+| 4. Depth-induced collapse   | Radius–depth forced leaves to same shell              | **Radius–depth regularization completely removed**                                           |
+
+## Equations in `train_toy_archFix{2,7}.py`
+
+The files `train_toy_archFix2.py` and `train_toy_archFix7.py` implement a **Rectified Flow** generative model instead of the DDPM used in earlier iterations. This approach learns a velocity field to transport the probability mass from a noise distribution to the data distribution along straight lines.
+
+#### 1. Rectified Flow Interpolation
+For a data sample $X_1$ (latent visit representation) and a noise sample $X_0 \sim \mathcal{N}(0, I)$, we define a linear interpolation path $X_t$ for $t \in [0, 1]$:
+$$
+X_t = (1 - t) X_0 + t X_1
+$$
+The time derivative (velocity) of this path is constant:
+$$
+\frac{dX_t}{dt} = X_1 - X_0
+$$
+
+#### 2. Flow Matching Loss
+The velocity model $v_\theta(X_t, t)$ is trained to predict this target velocity. The loss function is the mean squared error (MSE):
+$$
+\mathcal{L}_{\text{flow}} = \| v_\theta(X_t, t) - (X_1 - X_0) \|^2
+$$
+This encourages the vector field to follow the straight paths connecting noise to data.
+
+#### 3. Sampling via Euler Integration
+To generate samples, we start with $x_0 \sim \mathcal{N}(0, I)$ and numerically integrate the predicted velocity field over $N$ steps (with step size $\Delta t = 1/N$):
+$$
+x_{t+\Delta t} = x_t + v_\theta(x_t, t) \cdot \Delta t
+$$
+For hyperbolic embeddings, the code includes a stabilization step every few iterations to ensure the tangent vector $x_t$ remains consistent with the manifold geometry (projecting via exponential and logarithmic maps at the origin):
+$$
+x_t \leftarrow \log_0(\exp_0(x_t))
+$$
+
+#### 4. Total Training Objective
+The model is trained jointly with a reconstruction objective to ensure the latent space retains semantic information. The total loss is:
+$$
+\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{flow}} + \lambda_{\text{recon}} \cdot \mathcal{L}_{\text{focal}}
+$$
+where $\mathcal{L}_{\text{focal}}$ is the Focal Loss computed on the decoder's logits compared to the ground-truth multi-hot code vectors.
+
+## Encoders and Decoders
+
+The final architecture uses distinct encoder/decoder pairs depending on the embedding geometry.
+
+#### Euclidean Pipeline
+- **Encoder (`LearnableVisitEncoder`):** A learnable pooling module that aggregates code embeddings into a single visit vector. It can use an attention mechanism (`use_attention=True`) to weigh codes dynamically or default to simple pooling. It projects the aggregated vector into the latent dimension.
+- **Decoder (`StrongVisitDecoder`):** A deep residual Multi-Layer Perceptron (MLP) (e.g., 6 residual blocks with hidden dimension 512). It takes the latent visit vector and predicts logits for all possible ICD codes. This increased depth allows it to unpack complex combinatorial signals from the latent space.
+
+#### Hyperbolic Pipeline
+- **Encoder (`HyperbolicVisitEncoder`):** Instead of standard mean pooling, this encoder computes the **Einstein Midpoint** (hyperbolic barycenter) of the code embeddings in the Poincaré ball. This operation respects the hyperbolic geometry. The resulting point on the manifold is then mapped to the tangent space at the origin via the logarithmic map (`logmap0`) to serve as the input for the Rectified Flow model.
+- **Decoder (`HyperbolicDistanceDecoder`):** A geometry-aware decoder that calculates the probability of a code $c$ being in visit $v$ based on their hyperbolic distance. The logits are proportional to the negative squared distance in the Poincaré ball:
+  $$
+  \text{logits}(v, c) = - \frac{d_{\mathbb{B}}(v, c)^2}{\tau}
+  $$
+  where $\tau$ is a learnable or annealed temperature parameter. This forces the model to place visit latents geometrically close to their constituent codes.
