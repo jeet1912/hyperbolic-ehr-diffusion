@@ -5,7 +5,7 @@ import numpy as np
 import random
 import copy
 import matplotlib.pyplot as plt
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 
 from data_icd_toy import ToyICDHierarchy, sample_toy_trajectories
 from hyperbolic_embeddings import HyperbolicCodeEmbedding, VisitEncoder
@@ -13,266 +13,14 @@ from euclidean_embeddings import EuclideanCodeEmbedding, EuclideanVisitEncoder
 from diffusion import cosine_beta_schedule
 from traj_model import TrajectoryEpsModel
 from metrics_toy import traj_stats
-
-
-class TrajDataset(Dataset):
-    def __init__(self, trajs, max_len, pad_idx):
-        self.trajs = trajs
-        self.max_len = max_len
-        self.pad_idx = pad_idx
-
-    def __len__(self):
-        return len(self.trajs)
-
-    def __getitem__(self, idx):
-        traj = self.trajs[idx]
-        # pad / truncate to max_len
-        if len(traj) >= self.max_len:
-            traj = traj[: self.max_len]
-        else:
-            pad_visits = [[self.pad_idx]] * (self.max_len - len(traj))
-            traj = traj + pad_visits
-        return traj  # list of visits (each visit is list of code indices)
-
-
-def make_collate_fn(pad_idx):
-    def collate_fn(batch):
-        B = len(batch)
-        L = len(batch[0])
-
-        flat_visits = []
-        visit_mask = []
-
-        for traj in batch:
-            row_mask = []
-            for visit_codes in traj:
-                v = torch.tensor(visit_codes, dtype=torch.long)
-                flat_visits.append(v)
-
-                if len(visit_codes) == 1 and visit_codes[0] == pad_idx:
-                    row_mask.append(False)
-                else:
-                    row_mask.append(True)
-
-            visit_mask.append(row_mask)
-
-        visit_mask = torch.tensor(visit_mask, dtype=torch.bool)
-        return flat_visits, B, L, visit_mask
-
-    return collate_fn
-
-
-def build_visit_tensor(visit_enc, flat_visits, B, L, dim, device):
-    visit_enc.eval()
-    with torch.no_grad():
-        visit_vecs = visit_enc(flat_visits).to(device)  # [B*L, dim]
-    x0 = visit_vecs.view(B, L, dim)
-    return x0
-
-
-def decode_visit_vectors(sampled_visits, code_emb, visit_enc, embedding_type, codes_per_visit):
-    """
-    OLD embedding-similarity decoder. Kept for potential analysis,
-    but not used in the main pipeline once VisitDecoder is introduced.
-    """
-    num_samples, max_len, dim = sampled_visits.shape
-    visit_vecs = sampled_visits.view(num_samples * max_len, dim)  # [B*L, D]
-
-    if embedding_type == "hyperbolic":
-        # code_emb.emb: [N_all, D] on the Poincaré ball
-        code_tangent = visit_enc.manifold.logmap0(code_emb.emb)  # [N_all, D]
-        pad_idx = getattr(visit_enc, "pad_idx", None)
-        if pad_idx is not None:
-            # keep only real codes (0..pad_idx-1), drop pad row
-            code_tangent = code_tangent[:pad_idx]  # [N_real, D]
-        sims = visit_vecs @ code_tangent.t()       # [B*L, N_real]
-
-    else:
-        pad_idx = getattr(visit_enc, "pad_idx", None)
-        if pad_idx is not None:
-            code_matrix = code_emb.emb.weight[:pad_idx]  # [N_real, D]
-        else:
-            code_matrix = code_emb.emb.weight            # [N_all, D]
-
-        # negative squared Euclidean distance as similarity
-        diff = visit_vecs.unsqueeze(1) - code_matrix.unsqueeze(0)  # [B*L, N_real, D]
-        sims = -(diff ** 2).sum(-1)                               # [B*L, N_real]
-
-    topk_idx = sims.topk(k=codes_per_visit, dim=-1).indices       # [B*L, K]
-    return topk_idx.view(num_samples, max_len, codes_per_visit).cpu()
-
-
-def visits_from_indices(indices_tensor):
-    visits = []
-    flattened = indices_tensor.view(-1, indices_tensor.shape[-1])
-    for visit_codes in flattened:
-        unique_codes = sorted(set(int(c) for c in visit_codes.tolist()))
-        visits.append(unique_codes)
-    return visits
-
-
-def mean_tree_distance_from_visits(visit_lists, hier):
-    dists = []
-    max_code_idx = len(hier.codes) - 1
-
-    for visit in visit_lists:
-        # keep only real codes: 0 .. len(hier.codes)-1
-        filtered = [c for c in visit if 0 <= c <= max_code_idx]
-        if len(filtered) < 2:
-            continue
-        codes = [hier.idx2code[i] for i in filtered]
-        for i in range(len(codes)):
-            for j in range(i + 1, len(codes)):
-                dist = hier.tree_distance(codes[i], codes[j])
-                if dist is not None:
-                    dists.append(dist)
-    if not dists:
-        return None
-    return float(sum(dists) / len(dists))
-
-
-def code_pair_loss(code_emb, hier, device, num_pairs=512):
-    """
-    Encourage embedding distances to correlate with tree distances.
-    Only uses real codes (excludes pad index).
-    """
-    n_real = len(hier.codes)  # real codes: 0..n_real-1
-
-    # sample random pairs of real codes
-    idx_i = torch.randint(0, n_real, (num_pairs,), device=device)
-    idx_j = torch.randint(0, n_real, (num_pairs,), device=device)
-
-    # slice off pad row if present: emb[:n_real] are real codes
-    base_emb = code_emb.emb
-    if isinstance(base_emb, nn.Embedding):
-        emb_tensor = base_emb.weight
-    else:
-        emb_tensor = base_emb
-    emb = emb_tensor[:n_real]  # [n_real, dim]
-
-    d_hyper_list = []
-    d_tree_list = []
-
-    # we can loop in Python here; num_pairs is small
-    for i, j in zip(idx_i.tolist(), idx_j.tolist()):
-        if i == j:
-            continue
-
-        c1 = hier.idx2code[i]
-        c2 = hier.idx2code[j]
-        d_tree = hier.tree_distance(c1, c2)
-        if d_tree is None:
-            continue
-        d_tree_list.append(d_tree)
-
-        # hyperbolic vs euclidean distance
-        if hasattr(code_emb, "manifold"):
-            v1 = emb[i]
-            v2 = emb[j]
-            # manifold.dist expects batched inputs; keep it simple
-            d_h = code_emb.manifold.dist(v1.unsqueeze(0), v2.unsqueeze(0)).squeeze(0)
-        else:
-            d_h = torch.norm(emb[i] - emb[j])
-
-        d_hyper_list.append(d_h)
-
-    if not d_tree_list:
-        # fallback: no pairs (very unlikely)
-        return torch.tensor(0.0, dtype=torch.float32, device=device)
-
-    d_tree = torch.tensor(d_tree_list, dtype=torch.float32, device=device)
-    d_hyper = torch.stack(d_hyper_list).to(device)  # [M]
-
-    # normalize both to zero mean / unit variance
-    d_tree = (d_tree - d_tree.mean()) / (d_tree.std() + 1e-6)
-    d_hyper = (d_hyper - d_hyper.mean()) / (d_hyper.std() + 1e-6)
-
-    # MSE between normalized distances
-    return torch.mean((d_hyper - d_tree) ** 2)
-
-
-def _is_hyperbolic(embedding_type: str) -> bool:
-    return embedding_type is not None and embedding_type.lower() == "hyperbolic"
-
-
-def _mobius_scalar_mul_batch(manifold, coeffs, points):
-    """Apply Möbius scalar multiplication per batch element."""
-    B = points.shape[0]
-    out = []
-    if coeffs.dim() == 0:
-        coeffs = coeffs.view(1)
-    elif coeffs.dim() == 1:
-        coeffs = coeffs
-    else:
-        coeffs = coeffs.view(B, -1)[:, 0]
-    if coeffs.numel() == 1 and B > 1:
-        coeffs = coeffs.repeat(B)
-    coeffs = coeffs.to(points.device, points.dtype)
-    for i in range(B):
-        c = coeffs[i]
-        out.append(manifold.mobius_scalar_mul(c, points[i]))
-    return torch.stack(out, dim=0)
-
-
-def _mobius_add_batch(manifold, x, y):
-    return torch.stack([manifold.mobius_add(x[i], y[i]) for i in range(x.shape[0])], dim=0)
-
-
-def _hyperbolic_forward_noise(manifold, x0, eps, sqrt_a, sqrt_one_minus_a):
-    x0_man = manifold.expmap0(x0)
-    eps_man = manifold.expmap0(eps)
-    x0_scaled = _mobius_scalar_mul_batch(manifold, sqrt_a.view(-1), x0_man)
-    noise_scaled = _mobius_scalar_mul_batch(manifold, sqrt_one_minus_a.view(-1), eps_man)
-    x_t_man = _mobius_add_batch(manifold, x0_scaled, noise_scaled)
-    return manifold.logmap0(x_t_man)
-
-
-def _hyperbolic_remove_noise(manifold, x_t, eps_hat, sqrt_a, sqrt_one_minus_a):
-    x_t_man = manifold.expmap0(x_t)
-    eps_man = manifold.expmap0(eps_hat)
-    noise_scaled = _mobius_scalar_mul_batch(manifold, sqrt_one_minus_a.view(-1), eps_man)
-    diff = _mobius_add_batch(manifold, x_t_man, -noise_scaled)
-    inv_scale = (1.0 / (sqrt_a + 1e-8)).view(-1)
-    x0_man = _mobius_scalar_mul_batch(manifold, inv_scale, diff)
-    return manifold.logmap0(x0_man)
-
-
-class VisitDecoder(nn.Module):
-    """
-    Shared Euclidean decoder for both hyperbolic and Euclidean setups.
-
-    Input: visit latent(s) in R^d
-      - shape [B, L, d] or [B*L, d]
-    Output:
-      - logits over real codes (no pad) of shape [B, L, num_codes] or [B*L, num_codes]
-    """
-    def __init__(self, dim: int, num_codes: int,
-                 hidden_dim: int = 128, dropout: float = 0.1):
-        super().__init__()
-        self.dim = dim
-        self.num_codes = num_codes
-
-        self.net = nn.Sequential(
-            nn.Linear(dim, hidden_dim),
-            nn.SiLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, num_codes)  # raw logits
-        )
-
-    def forward(self, v: torch.Tensor) -> torch.Tensor:
-        """
-        v: [B, L, dim] or [B*L, dim]
-        returns: logits over codes with matching leading dims
-        """
-        if v.dim() == 3:
-            B, L, D = v.shape
-            v_flat = v.view(B * L, D)
-            logits_flat = self.net(v_flat)        # [B*L, num_codes]
-            return logits_flat.view(B, L, self.num_codes)
-        elif v.dim() == 2:
-            return self.net(v)                    # [N, num_codes]
-        else:
-            raise ValueError(f"Expected v of shape [B,L,d] or [N,d], got {v.shape}")
+from data_utils import TrajDataset, make_collate_fn, build_visit_tensor
+from geometry_utils import code_pair_loss
+from hyperbolic_noise import (
+    is_hyperbolic,
+    hyperbolic_forward_noise,
+    hyperbolic_remove_noise,
+)
+from decoders import VisitDecoder
 
 
 def sample_fake_visit_indices(
@@ -296,7 +44,7 @@ def sample_fake_visit_indices(
     was_training = eps_model.training
     eps_model.eval()
     with torch.no_grad():
-        use_hyp = _is_hyperbolic(embedding_type)
+        use_hyp = is_hyperbolic(embedding_type)
         manifold = getattr(visit_enc, "manifold", None) if use_hyp else None
         x_t = torch.randn(num_samples, max_len, dim, device=device)
         t = torch.randint(0, T, (num_samples,), device=device)
@@ -309,7 +57,7 @@ def sample_fake_visit_indices(
         sqrt_a = torch.sqrt(a_bar_t)
         sqrt_one_minus = torch.sqrt(1 - a_bar_t)
         if use_hyp and manifold is not None:
-            x0_pred = _hyperbolic_remove_noise(manifold, x_t, eps_hat, sqrt_a, sqrt_one_minus)
+            x0_pred = hyperbolic_remove_noise(manifold, x_t, eps_hat, sqrt_a, sqrt_one_minus)
         else:
             x0_pred = (x_t - sqrt_one_minus * eps_hat) / sqrt_a
 
@@ -344,7 +92,7 @@ def sample_trajectories(
     visit_enc.eval()
     visit_dec.eval()
     synthetic_trajs = []
-    use_hyperbolic = _is_hyperbolic(embeddingType)
+    use_hyperbolic = is_hyperbolic(embeddingType)
     manifold = getattr(visit_enc, "manifold", None) if use_hyperbolic else None
 
     with torch.no_grad():
@@ -361,7 +109,9 @@ def sample_trajectories(
             sqrt_one_minus = torch.sqrt(1 - alpha_bar).view(1, 1, 1).repeat(num_samples, 1, 1)
 
             if use_hyperbolic and manifold is not None:
-                x0_est = _hyperbolic_remove_noise(manifold, x_t, eps_hat, sqrt_alpha_bar, sqrt_one_minus)
+                x0_est = hyperbolic_remove_noise(
+                    manifold, x_t, eps_hat, sqrt_alpha_bar, sqrt_one_minus
+                )
             else:
                 x0_est = (x_t - sqrt_one_minus * eps_hat) / sqrt_alpha_bar
 
@@ -372,7 +122,7 @@ def sample_trajectories(
                 sqrt_one_minus_prev = torch.sqrt(1 - alpha_bar_prev).view(1, 1, 1).repeat(num_samples, 1, 1)
 
                 if use_hyperbolic and manifold is not None:
-                    x_t = _hyperbolic_forward_noise(
+                    x_t = hyperbolic_forward_noise(
                         manifold,
                         x0_est,
                         noise,
@@ -461,12 +211,12 @@ def compute_batch_loss(
     t = torch.randint(0, T, (B,), device=device).long()
     a_bar_t = alphas_cumprod[t].view(B, 1, 1)
     eps = torch.randn_like(x0)
-    use_hyperbolic = _is_hyperbolic(embedding_type)
+    use_hyperbolic = is_hyperbolic(embedding_type)
     manifold = getattr(visit_enc, "manifold", None) if use_hyperbolic else None
     if use_hyperbolic and manifold is not None:
         sqrt_a = torch.sqrt(a_bar_t)
         sqrt_one_minus = torch.sqrt(1 - a_bar_t)
-        x_t = _hyperbolic_forward_noise(manifold, x0, eps, sqrt_a, sqrt_one_minus)
+        x_t = hyperbolic_forward_noise(manifold, x0, eps, sqrt_a, sqrt_one_minus)
     else:
         x_t = torch.sqrt(a_bar_t) * x0 + torch.sqrt(1 - a_bar_t) * eps
     eps_hat = eps_model(x_t, t, visit_mask=visit_mask)
@@ -545,7 +295,7 @@ def compute_batch_accuracy(
     """
     visit_enc.eval()
     visit_dec.eval()
-    use_hyperbolic = _is_hyperbolic(embedding_type)
+    use_hyperbolic = is_hyperbolic(embedding_type)
     manifold = getattr(visit_enc, "manifold", None) if use_hyperbolic else None
     with torch.no_grad():
         x0 = build_visit_tensor(visit_enc, flat_visits, B, L, dim, device)
@@ -555,14 +305,14 @@ def compute_batch_accuracy(
         if use_hyperbolic and manifold is not None:
             sqrt_a = torch.sqrt(a_bar_t)
             sqrt_one_minus = torch.sqrt(1 - a_bar_t)
-            x_t = _hyperbolic_forward_noise(manifold, x0, eps, sqrt_a, sqrt_one_minus)
+            x_t = hyperbolic_forward_noise(manifold, x0, eps, sqrt_a, sqrt_one_minus)
         else:
             sqrt_a = torch.sqrt(a_bar_t)
             sqrt_one_minus = torch.sqrt(1 - a_bar_t)
             x_t = sqrt_a * x0 + sqrt_one_minus * eps
         eps_hat = eps_model(x_t, t, visit_mask=visit_mask)
         if use_hyperbolic and manifold is not None:
-            x0_pred = _hyperbolic_remove_noise(manifold, x_t, eps_hat, sqrt_a, sqrt_one_minus)
+            x0_pred = hyperbolic_remove_noise(manifold, x_t, eps_hat, sqrt_a, sqrt_one_minus)
         else:
             x0_pred = (x_t - sqrt_one_minus * eps_hat) / sqrt_a
 
