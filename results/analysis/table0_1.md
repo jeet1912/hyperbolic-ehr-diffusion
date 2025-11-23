@@ -1,29 +1,8 @@
+### Experiment depth2_base_w/Dec | depth 2 | hyperbolic | regularization=off
+![Train loss](../plots/forTable0_1/depth2_base_w-Dec_depth2_hyperbolic_dim16_layers4_T1000_regoff_lt0_lr0_train.png)
+![Val loss](../plots/forTable0_1/depth2_base_w-Dec_depth2_hyperbolic_dim16_layers4_T1000_regoff_lt0_lr0_val.png)
 
-Real stats (depth2_base_w/Dec, max_depth=2): {'mean_depth': 1.6439176670642877, 'std_depth': 0.5137982104125317, 'mean_tree_dist': 2.1205701725560644, 'std_tree_dist': 1.2453175481436083, 'mean_root_purity': 0.6241599458637942, 'std_root_purity': 0.2040143257571073}
-
-=== Experiment depth2_base_w/Dec | depth 2 | hyperbolic | regularization=off ===
-Epoch 1/20, Train Loss: 1.420406, Val Loss: 1.115433, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 2/20, Train Loss: 0.818002, Val Loss: 0.747522, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 3/20, Train Loss: 0.528572, Val Loss: 0.589247, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 4/20, Train Loss: 0.412958, Val Loss: 0.523214, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 5/20, Train Loss: 0.351586, Val Loss: 0.495023, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 6/20, Train Loss: 0.330843, Val Loss: 0.487745, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 7/20, Train Loss: 0.320096, Val Loss: 0.482589, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 8/20, Train Loss: 0.313115, Val Loss: 0.481770, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 9/20, Train Loss: 0.308652, Val Loss: 0.482867, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 10/20, Train Loss: 0.304350, Val Loss: 0.484257, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 11/20, Train Loss: 0.299351, Val Loss: 0.482692, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 12/20, Train Loss: 0.274030, Val Loss: 0.443411, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 13/20, Train Loss: 0.244769, Val Loss: 0.439425, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 14/20, Train Loss: 0.239676, Val Loss: 0.434053, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 15/20, Train Loss: 0.235388, Val Loss: 0.435170, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 16/20, Train Loss: 0.232002, Val Loss: 0.438892, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 17/20, Train Loss: 0.229020, Val Loss: 0.432752, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 18/20, Train Loss: 0.225859, Val Loss: 0.431862, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 19/20, Train Loss: 0.223412, Val Loss: 0.434686, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 20/20, Train Loss: 0.221387, Val Loss: 0.437002, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Best validation loss: 0.431862
-Saved loss curves to results/plots
+Best validation loss: 0.431862  
 Test recall@4: 0.0493
 
 Sample trajectory (hyperbolic) 1:
@@ -53,29 +32,11 @@ Correlation(tree_dist, hyperbolic_embedding_dist) = 0.0463
 
 Synthetic (hyperbolic) stats (N=1000): {'mean_depth': 1.3694583333333334, 'std_depth': 0.6919481242096276, 'mean_tree_dist': 2.658041697691735, 'std_tree_dist': 0.9128868276723565, 'mean_root_purity': 0.4290833333333333, 'std_root_purity': 0.13644288080446784}
 
-=== Experiment depth2_base_w/Dec | depth 2 | euclidean | regularization=off ===
-Epoch 1/20, Train Loss: 1.474472, Val Loss: 1.170265, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 2/20, Train Loss: 0.944327, Val Loss: 0.919415, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 3/20, Train Loss: 0.762500, Val Loss: 0.828219, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 4/20, Train Loss: 0.669603, Val Loss: 0.779058, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 5/20, Train Loss: 0.625948, Val Loss: 0.754990, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 6/20, Train Loss: 0.591662, Val Loss: 0.727655, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 7/20, Train Loss: 0.563086, Val Loss: 0.715106, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 8/20, Train Loss: 0.553368, Val Loss: 0.705919, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 9/20, Train Loss: 0.529209, Val Loss: 0.687594, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 10/20, Train Loss: 0.502110, Val Loss: 0.682125, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 11/20, Train Loss: 0.498790, Val Loss: 0.676293, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 12/20, Train Loss: 0.489174, Val Loss: 0.667226, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 13/20, Train Loss: 0.477639, Val Loss: 0.674488, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 14/20, Train Loss: 0.475990, Val Loss: 0.675020, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 15/20, Train Loss: 0.468953, Val Loss: 0.657662, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 16/20, Train Loss: 0.461091, Val Loss: 0.647391, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 17/20, Train Loss: 0.461387, Val Loss: 0.658540, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 18/20, Train Loss: 0.461810, Val Loss: 0.656768, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 19/20, Train Loss: 0.453207, Val Loss: 0.647204, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 20/20, Train Loss: 0.452916, Val Loss: 0.654236, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Best validation loss: 0.647204
-Saved loss curves to results/plots
+### Experiment depth2_base_w/Dec | depth 2 | euclidean | regularization=off
+![Train loss](../plots/forTable0_1/depth2_base_w-Dec_depth2_euclidean_dim16_layers4_T1000_regoff_lt0_lr0_train.png)
+![Val loss](../plots/forTable0_1/depth2_base_w-Dec_depth2_euclidean_dim16_layers4_T1000_regoff_lt0_lr0_val.png)
+
+Best validation loss: 0.647204  
 Test recall@4: 0.2446
 
 Sample trajectory (euclidean) 1:
@@ -105,29 +66,11 @@ Correlation(tree_dist, euclidean_embedding_dist) = 0.0483
 
 Synthetic (euclidean) stats (N=1000): {'mean_depth': 1.631375, 'std_depth': 0.48424230440452015, 'mean_tree_dist': 2.6212617779598526, 'std_tree_dist': 1.165768145120876, 'mean_root_purity': 0.5488333333333333, 'std_root_purity': 0.16479372628295724}
 
-=== Experiment depth2_base_w/Dec | depth 2 | hyperbolic | regularization=on ===
-Epoch 1/20, Train Loss: 1.462018, Val Loss: 1.153012, lambda_tree_eff=0.0017, lambda_radius_eff=0.0005, lambda_recon=1.0000
-Epoch 2/20, Train Loss: 0.852555, Val Loss: 0.783507, lambda_tree_eff=0.0033, lambda_radius_eff=0.0010, lambda_recon=1.0000
-Epoch 3/20, Train Loss: 0.578059, Val Loss: 0.637432, lambda_tree_eff=0.0050, lambda_radius_eff=0.0015, lambda_recon=1.0000
-Epoch 4/20, Train Loss: 0.479055, Val Loss: 0.594632, lambda_tree_eff=0.0067, lambda_radius_eff=0.0020, lambda_recon=1.0000
-Epoch 5/20, Train Loss: 0.416334, Val Loss: 0.517424, lambda_tree_eff=0.0083, lambda_radius_eff=0.0025, lambda_recon=1.0000
-Epoch 6/20, Train Loss: 0.340931, Val Loss: 0.485708, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 7/20, Train Loss: 0.289025, Val Loss: 0.449283, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 8/20, Train Loss: 0.266206, Val Loss: 0.442966, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 9/20, Train Loss: 0.259009, Val Loss: 0.441952, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 10/20, Train Loss: 0.254132, Val Loss: 0.438347, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 11/20, Train Loss: 0.250429, Val Loss: 0.441955, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 12/20, Train Loss: 0.246596, Val Loss: 0.439199, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 13/20, Train Loss: 0.243063, Val Loss: 0.440750, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 14/20, Train Loss: 0.239198, Val Loss: 0.437931, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 15/20, Train Loss: 0.237778, Val Loss: 0.441545, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 16/20, Train Loss: 0.235192, Val Loss: 0.442039, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 17/20, Train Loss: 0.232582, Val Loss: 0.440032, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 18/20, Train Loss: 0.230367, Val Loss: 0.439030, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 19/20, Train Loss: 0.227990, Val Loss: 0.443246, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 20/20, Train Loss: 0.227005, Val Loss: 0.442023, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Best validation loss: 0.437931
-Saved loss curves to results/plots
+### Experiment depth2_base_w/Dec | depth 2 | hyperbolic | regularization=on
+![Train loss](../plots/forTable0_1/depth2_base_w-Dec_depth2_hyperbolic_dim16_layers4_T1000_regon_lt0p01_lr0p003_train.png)
+![Val loss](../plots/forTable0_1/depth2_base_w-Dec_depth2_hyperbolic_dim16_layers4_T1000_regon_lt0p01_lr0p003_val.png)
+
+Best validation loss: 0.437931  
 Test recall@4: 0.0488
 
 Sample trajectory (hyperbolic) 1:
@@ -157,29 +100,11 @@ Correlation(tree_dist, hyperbolic_embedding_dist) = 0.9879
 
 Synthetic (hyperbolic) stats (N=1000): {'mean_depth': 1.3542083333333332, 'std_depth': 0.5106317557012642, 'mean_tree_dist': 2.3730242360379346, 'std_tree_dist': 0.8250231790610231, 'mean_root_purity': 0.38979166666666665, 'std_root_purity': 0.13945563188300747}
 
-=== Experiment depth2_base_w/Dec | depth 2 | euclidean | regularization=on ===
-Epoch 1/20, Train Loss: 1.518372, Val Loss: 1.198585, lambda_tree_eff=0.0017, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 2/20, Train Loss: 0.964447, Val Loss: 0.930130, lambda_tree_eff=0.0033, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 3/20, Train Loss: 0.768609, Val Loss: 0.828256, lambda_tree_eff=0.0050, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 4/20, Train Loss: 0.686010, Val Loss: 0.789062, lambda_tree_eff=0.0067, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 5/20, Train Loss: 0.647194, Val Loss: 0.780441, lambda_tree_eff=0.0083, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 6/20, Train Loss: 0.630631, Val Loss: 0.779954, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 7/20, Train Loss: 0.613124, Val Loss: 0.763886, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 8/20, Train Loss: 0.603475, Val Loss: 0.750512, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 9/20, Train Loss: 0.579728, Val Loss: 0.736511, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 10/20, Train Loss: 0.557208, Val Loss: 0.715678, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 11/20, Train Loss: 0.549445, Val Loss: 0.718298, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 12/20, Train Loss: 0.529633, Val Loss: 0.697278, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 13/20, Train Loss: 0.505477, Val Loss: 0.692288, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 14/20, Train Loss: 0.505152, Val Loss: 0.673880, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 15/20, Train Loss: 0.494663, Val Loss: 0.684874, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 16/20, Train Loss: 0.485185, Val Loss: 0.677147, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 17/20, Train Loss: 0.484470, Val Loss: 0.652734, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 18/20, Train Loss: 0.475954, Val Loss: 0.671516, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 19/20, Train Loss: 0.473294, Val Loss: 0.665658, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 20/20, Train Loss: 0.471953, Val Loss: 0.666103, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Best validation loss: 0.652734
-Saved loss curves to results/plots
+### Experiment depth2_base_w/Dec | depth 2 | euclidean | regularization=on
+![Train loss](../plots/forTable0_1/depth2_base_w-Dec_depth2_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_train.png)
+![Val loss](../plots/forTable0_1/depth2_base_w-Dec_depth2_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_val.png)
+
+Best validation loss: 0.652734  
 Test recall@4: 0.2237
 
 Sample trajectory (euclidean) 1:
@@ -209,31 +134,11 @@ Correlation(tree_dist, euclidean_embedding_dist) = 0.5077
 
 Synthetic (euclidean) stats (N=1000): {'mean_depth': 1.6311666666666667, 'std_depth': 0.5165223185454386, 'mean_tree_dist': 2.4414581066376497, 'std_tree_dist': 1.181283327773499, 'mean_root_purity': 0.53125, 'std_root_purity': 0.15904172670507993}
 
-Real stats (depth7_extended_w/Dec, max_depth=7): {'mean_depth': 5.3797976334479465, 'std_depth': 1.7294582012361523, 'mean_tree_dist': 5.7591450057100175, 'std_tree_dist': 4.756650684766557, 'mean_root_purity': 0.6289569269083962, 'std_root_purity': 0.20468844637974468}
+### Experiment depth7_extended_w/Dec | depth 7 | hyperbolic | regularization=off
+![Train loss](../plots/forTable0_1/depth7_extended_w-Dec_depth7_hyperbolic_dim16_layers4_T1000_regoff_lt0_lr0_train.png)
+![Val loss](../plots/forTable0_1/depth7_extended_w-Dec_depth7_hyperbolic_dim16_layers4_T1000_regoff_lt0_lr0_val.png)
 
-=== Experiment depth7_extended_w/Dec | depth 7 | hyperbolic | regularization=off ===
-Epoch 1/20, Train Loss: 1.430760, Val Loss: 1.111367, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 2/20, Train Loss: 0.813900, Val Loss: 0.730096, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 3/20, Train Loss: 0.511168, Val Loss: 0.556867, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 4/20, Train Loss: 0.373589, Val Loss: 0.476626, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 5/20, Train Loss: 0.293212, Val Loss: 0.423022, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 6/20, Train Loss: 0.257887, Val Loss: 0.411590, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 7/20, Train Loss: 0.242609, Val Loss: 0.403563, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 8/20, Train Loss: 0.232968, Val Loss: 0.398285, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 9/20, Train Loss: 0.217473, Val Loss: 0.366989, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 10/20, Train Loss: 0.178011, Val Loss: 0.354202, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 11/20, Train Loss: 0.167469, Val Loss: 0.351539, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 12/20, Train Loss: 0.162781, Val Loss: 0.348699, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 13/20, Train Loss: 0.158882, Val Loss: 0.348899, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 14/20, Train Loss: 0.155746, Val Loss: 0.349208, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 15/20, Train Loss: 0.152073, Val Loss: 0.348886, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 16/20, Train Loss: 0.150049, Val Loss: 0.349974, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 17/20, Train Loss: 0.147007, Val Loss: 0.349975, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 18/20, Train Loss: 0.146111, Val Loss: 0.351437, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 19/20, Train Loss: 0.144503, Val Loss: 0.349446, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 20/20, Train Loss: 0.143605, Val Loss: 0.346782, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Best validation loss: 0.346782
-Saved loss curves to results/plots
+Best validation loss: 0.346782  
 Test recall@4: 0.0094
 
 Sample trajectory (hyperbolic) 1:
@@ -263,29 +168,11 @@ Correlation(tree_dist, hyperbolic_embedding_dist) = -0.0415
 
 Synthetic (hyperbolic) stats (N=1000): {'mean_depth': 4.6375416666666665, 'std_depth': 2.019323060647773, 'mean_tree_dist': 8.488310969705353, 'std_tree_dist': 4.06970429546887, 'mean_root_purity': 0.49391666666666667, 'std_root_purity': 0.13793292955474973}
 
-=== Experiment depth7_extended_w/Dec | depth 7 | euclidean | regularization=off ===
-Epoch 1/20, Train Loss: 1.500497, Val Loss: 1.212608, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 2/20, Train Loss: 0.941795, Val Loss: 0.890056, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 3/20, Train Loss: 0.702886, Val Loss: 0.762403, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 4/20, Train Loss: 0.601558, Val Loss: 0.708888, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 5/20, Train Loss: 0.543972, Val Loss: 0.683037, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 6/20, Train Loss: 0.518432, Val Loss: 0.681648, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 7/20, Train Loss: 0.508848, Val Loss: 0.664360, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 8/20, Train Loss: 0.502130, Val Loss: 0.661869, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 9/20, Train Loss: 0.472186, Val Loss: 0.636099, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 10/20, Train Loss: 0.463133, Val Loss: 0.635940, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 11/20, Train Loss: 0.448055, Val Loss: 0.629208, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 12/20, Train Loss: 0.446382, Val Loss: 0.625313, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 13/20, Train Loss: 0.441872, Val Loss: 0.634846, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 14/20, Train Loss: 0.443139, Val Loss: 0.638036, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 15/20, Train Loss: 0.437929, Val Loss: 0.618249, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 16/20, Train Loss: 0.435912, Val Loss: 0.619855, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 17/20, Train Loss: 0.435208, Val Loss: 0.623755, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 18/20, Train Loss: 0.428370, Val Loss: 0.612466, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 19/20, Train Loss: 0.428033, Val Loss: 0.619466, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 20/20, Train Loss: 0.428026, Val Loss: 0.626818, lambda_tree_eff=0.0000, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Best validation loss: 0.612466
-Saved loss curves to results/plots
+### Experiment depth7_extended_w/Dec | depth 7 | euclidean | regularization=off
+![Train loss](../plots/forTable0_1/depth7_extended_w-Dec_depth7_euclidean_dim16_layers4_T1000_regoff_lt0_lr0_train.png)
+![Val loss](../plots/forTable0_1/depth7_extended_w-Dec_depth7_euclidean_dim16_layers4_T1000_regoff_lt0_lr0_val.png)
+
+Best validation loss: 0.612466  
 Test recall@4: 0.1416
 
 Sample trajectory (euclidean) 1:
@@ -315,29 +202,11 @@ Correlation(tree_dist, euclidean_embedding_dist) = -0.0843
 
 Synthetic (euclidean) stats (N=1000): {'mean_depth': 6.48525, 'std_depth': 0.49978239014595144, 'mean_tree_dist': 6.4741301963911875, 'std_tree_dist': 5.905505160937394, 'mean_root_purity': 0.54575, 'std_root_purity': 0.138182623726719}
 
-=== Experiment depth7_extended_w/Dec | depth 7 | hyperbolic | regularization=on ===
-Epoch 1/20, Train Loss: 1.459589, Val Loss: 1.133107, lambda_tree_eff=0.0017, lambda_radius_eff=0.0005, lambda_recon=1.0000
-Epoch 2/20, Train Loss: 0.814512, Val Loss: 0.725051, lambda_tree_eff=0.0033, lambda_radius_eff=0.0010, lambda_recon=1.0000
-Epoch 3/20, Train Loss: 0.511978, Val Loss: 0.548245, lambda_tree_eff=0.0050, lambda_radius_eff=0.0015, lambda_recon=1.0000
-Epoch 4/20, Train Loss: 0.360520, Val Loss: 0.450352, lambda_tree_eff=0.0067, lambda_radius_eff=0.0020, lambda_recon=1.0000
-Epoch 5/20, Train Loss: 0.272600, Val Loss: 0.395281, lambda_tree_eff=0.0083, lambda_radius_eff=0.0025, lambda_recon=1.0000
-Epoch 6/20, Train Loss: 0.223779, Val Loss: 0.371771, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 7/20, Train Loss: 0.204515, Val Loss: 0.364138, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 8/20, Train Loss: 0.193891, Val Loss: 0.359699, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 9/20, Train Loss: 0.185610, Val Loss: 0.361625, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 10/20, Train Loss: 0.179999, Val Loss: 0.360226, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 11/20, Train Loss: 0.175075, Val Loss: 0.358029, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 12/20, Train Loss: 0.171198, Val Loss: 0.354042, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 13/20, Train Loss: 0.167650, Val Loss: 0.355874, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 14/20, Train Loss: 0.163510, Val Loss: 0.351564, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 15/20, Train Loss: 0.160708, Val Loss: 0.358605, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 16/20, Train Loss: 0.158743, Val Loss: 0.355445, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 17/20, Train Loss: 0.155536, Val Loss: 0.353068, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 18/20, Train Loss: 0.152092, Val Loss: 0.354853, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 19/20, Train Loss: 0.150857, Val Loss: 0.356098, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Epoch 20/20, Train Loss: 0.149635, Val Loss: 0.354824, lambda_tree_eff=0.0100, lambda_radius_eff=0.0030, lambda_recon=1.0000
-Best validation loss: 0.351564
-Saved loss curves to results/plots
+### Experiment depth7_extended_w/Dec | depth 7 | hyperbolic | regularization=on
+![Train loss](../plots/forTable0_1/depth7_extended_w-Dec_depth7_hyperbolic_dim16_layers4_T1000_regon_lt0p01_lr0p003_train.png)
+![Val loss](../plots/forTable0_1/depth7_extended_w-Dec_depth7_hyperbolic_dim16_layers4_T1000_regon_lt0p01_lr0p003_val.png)
+
+Best validation loss: 0.351564  
 Test recall@4: 0.0106
 
 Sample trajectory (hyperbolic) 1:
@@ -367,29 +236,11 @@ Correlation(tree_dist, hyperbolic_embedding_dist) = 0.9725
 
 Synthetic (hyperbolic) stats (N=1000): {'mean_depth': 5.208208333333333, 'std_depth': 1.8587919795565855, 'mean_tree_dist': 9.419073463849584, 'std_tree_dist': 4.187826142776691, 'mean_root_purity': 0.42995833333333333, 'std_root_purity': 0.1530944640754706}
 
-=== Experiment depth7_extended_w/Dec | depth 7 | euclidean | regularization=on ===
-Epoch 1/20, Train Loss: 1.529125, Val Loss: 1.239995, lambda_tree_eff=0.0017, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 2/20, Train Loss: 0.984008, Val Loss: 0.907263, lambda_tree_eff=0.0033, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 3/20, Train Loss: 0.738314, Val Loss: 0.778129, lambda_tree_eff=0.0050, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 4/20, Train Loss: 0.637098, Val Loss: 0.740370, lambda_tree_eff=0.0067, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 5/20, Train Loss: 0.593386, Val Loss: 0.709507, lambda_tree_eff=0.0083, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 6/20, Train Loss: 0.577174, Val Loss: 0.705274, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 7/20, Train Loss: 0.556398, Val Loss: 0.683477, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 8/20, Train Loss: 0.534283, Val Loss: 0.693107, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 9/20, Train Loss: 0.524901, Val Loss: 0.680640, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 10/20, Train Loss: 0.518494, Val Loss: 0.680558, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 11/20, Train Loss: 0.511560, Val Loss: 0.664361, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 12/20, Train Loss: 0.506093, Val Loss: 0.675055, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 13/20, Train Loss: 0.492730, Val Loss: 0.652081, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 14/20, Train Loss: 0.471127, Val Loss: 0.646709, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 15/20, Train Loss: 0.461905, Val Loss: 0.650309, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 16/20, Train Loss: 0.465475, Val Loss: 0.630772, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 17/20, Train Loss: 0.459733, Val Loss: 0.642562, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 18/20, Train Loss: 0.453572, Val Loss: 0.651698, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 19/20, Train Loss: 0.453355, Val Loss: 0.656259, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Epoch 20/20, Train Loss: 0.454126, Val Loss: 0.644338, lambda_tree_eff=0.0100, lambda_radius_eff=0.0000, lambda_recon=1.0000
-Best validation loss: 0.630772
-Saved loss curves to results/plots
+### Experiment depth7_extended_w/Dec | depth 7 | euclidean | regularization=on
+![Train loss](../plots/forTable0_1/depth7_extended_w-Dec_depth7_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_train.png)
+![Val loss](../plots/forTable0_1/depth7_extended_w-Dec_depth7_euclidean_dim16_layers4_T1000_regon_lt0p01_lr0_val.png)
+
+Best validation loss: 0.630772  
 Test recall@4: 0.1903
 
 Sample trajectory (euclidean) 1:
@@ -418,3 +269,22 @@ Sample trajectory (euclidean) 3:
 Correlation(tree_dist, euclidean_embedding_dist) = 0.4818
 
 Synthetic (euclidean) stats (N=1000): {'mean_depth': 6.464666666666667, 'std_depth': 0.4987499930381509, 'mean_tree_dist': 6.646397497311566, 'std_tree_dist': 5.8206486833263495, 'mean_root_purity': 0.5469583333333333, 'std_root_purity': 0.13491169308312587}
+
+## Comparison Table
+| Depth / Experiment | Source | Embedding | Reg | Mean depth | Depth std | Mean tree dist | Tree dist std | Mean root purity | Root purity std | Corr(tree, emb) | Best val loss | Test recall@4 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| depth2_base_w/Dec | Real | — | — | 1.6439 | 0.5138 | 2.1206 | 1.2453 | 0.6242 | 0.2040 | — | — | — |
+| depth7_extended_w/Dec | Real | — | — | 5.3798 | 1.7295 | 5.7591 | 4.7567 | 0.6290 | 0.2047 | — | — | — |
+| depth2_base_w/Dec | Synthetic | hyperbolic | off | 1.3695 | 0.6919 | 2.6580 | 0.9129 | 0.4291 | 0.1364 | 0.0463 | 0.4319 | 0.0493 |
+| depth2_base_w/Dec | Synthetic | euclidean | off | 1.6314 | 0.4842 | 2.6213 | 1.1658 | 0.5488 | 0.1648 | 0.0483 | 0.6472 | 0.2446 |
+| depth2_base_w/Dec | Synthetic | hyperbolic | on | 1.3542 | 0.5106 | 2.3730 | 0.8250 | 0.3898 | 0.1395 | 0.9879 | 0.4379 | 0.0488 |
+| depth2_base_w/Dec | Synthetic | euclidean | on | 1.6312 | 0.5165 | 2.4415 | 1.1813 | 0.5313 | 0.1590 | 0.5077 | 0.6527 | 0.2237 |
+| depth7_extended_w/Dec | Synthetic | hyperbolic | off | 4.6375 | 2.0193 | 8.4883 | 4.0697 | 0.4939 | 0.1379 | -0.0415 | 0.3468 | 0.0094 |
+| depth7_extended_w/Dec | Synthetic | euclidean | off | 6.4853 | 0.4998 | 6.4741 | 5.9055 | 0.5458 | 0.1382 | -0.0843 | 0.6125 | 0.1416 |
+| depth7_extended_w/Dec | Synthetic | hyperbolic | on | 5.2082 | 1.8588 | 9.4191 | 4.1878 | 0.4300 | 0.1531 | 0.9725 | 0.3516 | 0.0106 |
+| depth7_extended_w/Dec | Synthetic | euclidean | on | 6.4647 | 0.4987 | 6.6464 | 5.8206 | 0.5470 | 0.1349 | 0.4818 | 0.6308 | 0.1903 |
+
+## Summary
+- **depth2_base_w/Dec (shallow hierarchy):** Euclidean models dominate recall. The unregularized Euclidean setting reaches 0.2446 recall@4 while keeping depth statistics close to real visits. Hyperbolic runs either remain too shallow (reg-off) or collapse all codes to the deepest shell (reg-on), yielding recall under 0.05 despite better tree-distance correlations.
+- **depth7_extended_w/Dec (deep hierarchy):** Reconstruction is harder overall, yet Euclidean regularization still attains the top recall@4 (0.1903). Hyperbolic models achieve excellent tree-distance alignment (≈0.97) but fail to map back to discrete codes (recall ≈0.01), indicating the decoder cannot fully leverage their structured latent space at greater depths.
+- **Overall observation:** Without diffusion-distance supervision, Euclidean embeddings balance reconstruction fidelity and hierarchy best, whereas the current hyperbolic setup trades recall for geometry. Stronger decoding or diffusion-distance objectives will be necessary to convert hyperbolic structure-awareness into better multi-label recall.
