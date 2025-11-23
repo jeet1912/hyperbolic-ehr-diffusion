@@ -122,4 +122,4 @@ $$ x_{t+\Delta t} = x_t + v_\theta(x_t, t) \cdot \Delta t $$
 #### 4. Total Objective
 $$ \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{flow}} + \lambda_{\text{recon}} \cdot \mathcal{L}_{\text{focal}} $$
 
-This architecture—combining the stability of Rectified Flow with the geometry-aware Einstein Encoder and Distance Decoder—finally bridges the gap, allowing the hyperbolic model to capture both the hierarchy and the discrete set structure of the visits.
+This architecture combining the stability of Rectified Flow with the geometry-aware Einstein Encoder and Distance Decoder finally bridges the gap, allowing the hyperbolic model to capture both the hierarchy and the discrete set structure of the visits.
