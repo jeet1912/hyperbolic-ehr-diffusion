@@ -173,8 +173,15 @@ def compute_batch_loss(
 def run_epoch(loader, velocity_model, visit_enc, visit_dec, code_emb, hier,
               device, embedding_type, codes_per_visit, lambda_recon, optimizer=None):
     is_training = optimizer is not None
-    velocity_model.train() if is_training else velocity_model.eval()
-    visit_dec.train() if is_training else visit_dec.eval()
+    if is_training:
+        velocity_model.train()
+        visit_enc.train()
+        visit_dec.train()
+    else:
+        velocity_model.eval()
+        visit_enc.eval()
+        visit_dec.eval()
+
 
     total_loss = 0.0
     total_samples = 0
@@ -245,18 +252,17 @@ def train_model(
 
         if val_loss < best_val:
             best_val = val_loss
+            # when saving
             best_state = {
                 "velocity": velocity_model.state_dict(),
                 "decoder": visit_dec.state_dict(),
-                "code_emb": code_emb.state_dict() if embedding_type == "hyperbolic" else None
+                "code_emb": code_emb.state_dict()
             }
 
-    # Load best
+    # when loading
     velocity_model.load_state_dict(best_state["velocity"])
     visit_dec.load_state_dict(best_state["decoder"])
-    if embedding_type == "hyperbolic" and best_state["code_emb"] is not None:
-        code_emb.load_state_dict(best_state["code_emb"])
-
+    code_emb.load_state_dict(best_state["code_emb"])
     save_loss_curves(train_losses, val_losses, plot_dir, tag)
     return best_val
 
