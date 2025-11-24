@@ -6,6 +6,7 @@ import numpy as np
 import random
 import copy
 import matplotlib.pyplot as plt
+import argparse
 from torch.utils.data import DataLoader
 import geoopt
 
@@ -78,7 +79,6 @@ def split_trajectories(trajs, train_ratio=0.8, val_ratio=0.1, seed=42):
 
     return gather(train_idx), gather(val_idx), gather(test_idx)
 
-# NEW: Temperature scheduling & rectified flow loss 
 def update_temperature(decoder, epoch, total_epochs=400, init_temp=1.0, final_temp=0.07):
     if not hasattr(decoder, 'set_temperature'):
         return
@@ -104,10 +104,8 @@ def rectified_flow_loss(model, latents: torch.Tensor, visit_mask: torch.Tensor):
     mask = visit_mask.unsqueeze(-1).float()
     return (loss * mask).sum() / (mask.sum() + 1e-8)
 
-# Sampling with Rectified Flow (10–20 steps) 
 def sample_trajectories(
     velocity_model,
-    code_emb,
     visit_enc,
     visit_dec,
     hier,
@@ -164,12 +162,10 @@ def sample_trajectories(
 
     return synthetic_trajs
 
-# Main training functions (updated) 
 def compute_batch_loss(
     flat_visits, B, L, visit_mask,
     velocity_model, visit_enc, visit_dec,
-    code_emb, hier, device,
-    embedding_type, codes_per_visit,
+    hier,
     lambda_recon=1000.0
 ):
     latents = visit_enc(flat_visits).contiguous()        # [B*L, dim]
@@ -180,7 +176,6 @@ def compute_batch_loss(
 
     clean_latents = latents.view(B * L, dim)
     logits = visit_dec(clean_latents)                    # [B*L, num_codes]
-    num_real_codes = logits.shape[-1]
 
     pad_idx = len(hier.codes)
     targets = torch.zeros_like(logits)
@@ -197,7 +192,7 @@ def compute_batch_loss(
     total_loss = flow_loss + lambda_recon * recon_loss
     return total_loss
 
-def run_epoch(loader, velocity_model, visit_enc, visit_dec, code_emb, hier,
+def run_epoch(loader, velocity_model, visit_enc, visit_dec, hier,
               device, embedding_type, codes_per_visit, lambda_recon, optimizer=None):
     is_training = optimizer is not None
     modules = [velocity_model, visit_enc, visit_dec]
@@ -216,8 +211,7 @@ def run_epoch(loader, velocity_model, visit_enc, visit_dec, code_emb, hier,
             loss = compute_batch_loss(
                 flat_visits, B, L, visit_mask,
                 velocity_model, visit_enc, visit_dec,
-                code_emb, hier, device,
-                embedding_type, codes_per_visit,
+                hier,
                 lambda_recon=lambda_recon
             )
 
@@ -258,11 +252,11 @@ def train_model(
 
     for epoch in range(1, n_epochs + 1):
         train_loss = run_epoch(train_loader, velocity_model, visit_enc, visit_dec,
-                               code_emb, hier, device, embedding_type, codes_per_visit,
+                               hier, device, embedding_type, codes_per_visit,
                                lambda_recon, optimizer=optimizer)
 
         val_loss = run_epoch(val_loader, velocity_model, visit_enc, visit_dec,
-                             code_emb, hier, device, embedding_type, codes_per_visit,
+                             hier, device, embedding_type, codes_per_visit,
                              lambda_recon, optimizer=None)
 
         scheduler.step()
@@ -385,30 +379,8 @@ def compute_code_frequency(trajs, num_codes, device):
     freq = counts / counts.sum()
     return freq.to(device)
 
-# Main (updated) 
-def main(
-    embeddingType: str,
-    traj_splits=None,
-    hier=None,
-    experiment_name: str = "final_sota",
-):
-    device = torch.device(
-            "cuda"
-            if torch.cuda.is_available()
-            else "mps"
-            if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
-            else "cpu"
-        )
-    print(f"Using device: {device}")
-
-    if hier is None:
-        hier = ToyICDHierarchy(extra_depth=5)  # depth 7
-    if traj_splits is None:
-        trajs = sample_toy_trajectories(hier, num_patients=20000)
-        train_trajs, val_trajs, test_trajs = split_trajectories(trajs)
-    else:
-        train_trajs, val_trajs, test_trajs = traj_splits
-
+def run_experiment(embeddingType, hier, traj_splits, experiment_name, device, n_epochs=50):
+    train_trajs, val_trajs, test_trajs = traj_splits
     max_len = 6
     batch_size = 128
     dim = 32
@@ -416,67 +388,38 @@ def main(
     collate = VisitCollator(pad_idx)
     pin_memory = device.type == "cuda"
     loader_kwargs = dict(collate_fn=collate, pin_memory=pin_memory)
-    train_dl = DataLoader(
-        TrajDataset(train_trajs, max_len, pad_idx),
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=4,
-        **loader_kwargs,
-    )
-    val_dl = DataLoader(
-        TrajDataset(val_trajs, max_len, pad_idx),
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=2,
-        **loader_kwargs,
-    )
-    test_dl = DataLoader(
-        TrajDataset(test_trajs, max_len, pad_idx),
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=2,
-        **loader_kwargs,
-    )
 
-    # Embeddings + Encoders 
+    train_dl = DataLoader(TrajDataset(train_trajs, max_len, pad_idx), batch_size=batch_size, shuffle=True, num_workers=4, **loader_kwargs)
+    val_dl = DataLoader(TrajDataset(val_trajs, max_len, pad_idx), batch_size=batch_size, shuffle=False, num_workers=2, **loader_kwargs)
+    test_dl = DataLoader(TrajDataset(test_trajs, max_len, pad_idx), batch_size=batch_size, shuffle=False, num_workers=2, **loader_kwargs)
+
     if embeddingType == "euclidean":
         code_emb = EuclideanCodeEmbedding(num_codes=len(hier.codes) + 1, dim=dim).to(device)
-        visit_enc = LearnableVisitEncoder(code_emb, dim=dim, pad_idx=pad_idx,
-                                          hidden_dim=256, use_attention=True).to(device)
-        visit_dec = StrongVisitDecoder(dim=dim, num_codes=len(hier.codes),
-                                       hidden_dim=512, num_res_blocks=6).to(device)
+        visit_enc = LearnableVisitEncoder(code_emb, dim=dim, pad_idx=pad_idx, hidden_dim=256, use_attention=True).to(device)
+        visit_dec = StrongVisitDecoder(dim=dim, num_codes=len(hier.codes), hidden_dim=512, num_res_blocks=6).to(device)
     else:
         code_emb = HyperbolicCodeEmbedding(num_codes=len(hier.codes) + 1, dim=dim, c=1.0).to(device)
         visit_enc = HyperbolicVisitEncoder(code_emb, pad_idx=pad_idx).to(device)
         freq = compute_code_frequency(train_trajs, len(hier.codes), device)
-        visit_dec = HyperbolicDistanceDecoder(
-            code_embedding=code_emb.emb,
-            manifold=code_emb.manifold,
-            code_freq=freq
-        ).to(device)
+        visit_dec = HyperbolicDistanceDecoder(code_embedding=code_emb.emb, manifold=code_emb.manifold, code_freq=freq).to(device)
 
-    # Model 
     velocity_model = TrajectoryVelocityModel(dim=dim, n_layers=6, n_heads=8, ff_dim=1024).to(device)
     codes_per_visit = 4
-
     lambda_recon_values = [1.0, 10.0, 100.0, 1000.0]
+
     results = []
     for lambda_recon in lambda_recon_values:
+        # Re-init for each run to be fair/clean, or keep weights? Usually re-init.
+        # Simplified: Just re-instantiate everything to be safe as in original script loop
         if embeddingType == "euclidean":
             code_emb = EuclideanCodeEmbedding(num_codes=len(hier.codes) + 1, dim=dim).to(device)
-            visit_enc = LearnableVisitEncoder(code_emb, dim=dim, pad_idx=pad_idx,
-                                              hidden_dim=256, use_attention=True).to(device)
-            visit_dec = StrongVisitDecoder(dim=dim, num_codes=len(hier.codes),
-                                           hidden_dim=512, num_res_blocks=6).to(device)
+            visit_enc = LearnableVisitEncoder(code_emb, dim=dim, pad_idx=pad_idx, hidden_dim=256, use_attention=True).to(device)
+            visit_dec = StrongVisitDecoder(dim=dim, num_codes=len(hier.codes), hidden_dim=512, num_res_blocks=6).to(device)
         else:
             code_emb = HyperbolicCodeEmbedding(num_codes=len(hier.codes) + 1, dim=dim, c=1.0).to(device)
             visit_enc = HyperbolicVisitEncoder(code_emb, pad_idx=pad_idx).to(device)
             freq = compute_code_frequency(train_trajs, len(hier.codes), device)
-            visit_dec = HyperbolicDistanceDecoder(
-                code_embedding=code_emb.emb,
-                manifold=code_emb.manifold,
-                code_freq=freq
-            ).to(device)
+            visit_dec = HyperbolicDistanceDecoder(code_embedding=code_emb.emb, manifold=code_emb.manifold, code_freq=freq).to(device)
 
         velocity_model = TrajectoryVelocityModel(dim=dim, n_layers=6, n_heads=8, ff_dim=1024).to(device)
 
@@ -487,12 +430,11 @@ def main(
             embedding_type=embeddingType,
             codes_per_visit=codes_per_visit,
             lambda_recon=lambda_recon,
-            n_epochs=50,
+            n_epochs=n_epochs,
             plot_dir=os.path.join("results", "plots"),
             tag=f"{experiment_name}_{embeddingType}_lrecon{int(lambda_recon)}"
         )
         print(f"Best validation loss (lambda_recon={lambda_recon}): {best_val:.6f}")
-        print("Saved loss curves to results/plots")
 
         test_recall = evaluate_test_accuracy(
             test_dl, velocity_model, visit_enc, visit_dec, code_emb,
@@ -501,7 +443,7 @@ def main(
         print(f"Test Recall@{codes_per_visit} (lambda_recon={lambda_recon}): {test_recall:.4f}")
 
         synthetic = sample_trajectories(
-            velocity_model, code_emb, visit_enc, visit_dec, hier,
+            velocity_model, visit_enc, visit_dec, hier,
             max_len, dim, num_samples=1000, embeddingType=embeddingType,
             device=device, codes_per_visit=codes_per_visit, num_steps=15
         )
@@ -512,30 +454,43 @@ def main(
         stats = traj_stats(synthetic, hier)
         print(f"Synthetic ({embeddingType}, lambda_recon={lambda_recon}) stats (N={len(synthetic)}): {stats}")
         results.append((lambda_recon, best_val, test_recall, corr))
-
     return results
 
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--extra_depth", type=int, default=5, help="Extra depth for ToyICD hierarchy (0=depth2, 5=depth7)")
+    parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
+    args = parser.parse_args()
 
-# Run exactly like before 
-if __name__ == "__main__":
+    device = torch.device(
+            "cuda"
+            if torch.cuda.is_available()
+            else "mps"
+            if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
+            else "cpu"
+        )
+    print(f"Using device: {device}")
+
     torch.manual_seed(42)
     np.random.seed(42)
     random.seed(42)
 
-    experiments = [
-        ("depth7_final", ToyICDHierarchy(extra_depth=5)),
-    ]
+    hier = ToyICDHierarchy(extra_depth=args.extra_depth)
+    name = f"depth{hier.max_depth}_final"
 
-    for name, hier in experiments:
-        trajs = sample_toy_trajectories(hier, num_patients=20000)
-        splits = split_trajectories(trajs)
-        real_stats = traj_stats(trajs, hier)
-        print(f"\n{name} | max_depth = {hier.max_depth} | Real stats: {real_stats}")
-        for emb in ["euclidean", "hyperbolic"]:
-            print(f"\n--- Running {emb} ---")
-            results = main(embeddingType=emb, traj_splits=splits, hier=hier, experiment_name=name)
-            for lambda_recon, best_val, test_recall, corr in results:
-                print(
-                    f"[Summary] {name} | {emb} | lambda_recon={lambda_recon}: "
-                    f"best_val={best_val:.6f}, test_recall={test_recall:.4f}, corr={corr:.4f}"
-                )
+    trajs = sample_toy_trajectories(hier, num_patients=20000)
+    splits = split_trajectories(trajs)
+    real_stats = traj_stats(trajs, hier)
+    print(f"\n{name} | max_depth = {hier.max_depth} | Real stats: {real_stats}")
+
+    for emb in ["euclidean", "hyperbolic"]:
+        print(f"\n--- Running {emb} ---")
+        results = run_experiment(emb, hier, splits, name, device, n_epochs=args.epochs)
+        for lambda_recon, best_val, test_recall, corr in results:
+            print(
+                f"[Summary] {name} | {emb} | lambda_recon={lambda_recon}: "
+                f"best_val={best_val:.6f}, test_recall={test_recall:.4f}, corr={corr:.4f}"
+            )
+
+if __name__ == "__main__":
+    main()
