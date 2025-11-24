@@ -2,7 +2,54 @@
 
 I am attempting to understand the underlying structure of patient trajectories—specifically, how sequences of medical visits evolve over time when mapped into a continuous latent space. The core hypothesis driving this work is that medical concepts (ICD codes) naturally form a hierarchy, and therefore, the latent space representing them should respect that geometry.
 
-This document is a record of the system I have built. It captures the architecture, the mathematical foundations, and the iterative failures that led to the current design. It merges the original experimental log with the final architectural decisions.
+This document is a record of the system I have built. It captures the architecture, the mathematical foundations, and the iterative failures that led to the current design. It merges the original experimental log with the final architectural decisions. To contextualize these decisions, we first define the clinical structures and the geometric priors that shape them.
+
+---
+
+## Clinical Structure: ICD Codes and Visits
+
+Electronic health records organize diagnostic information using standardized medical ontologies. In this work, we model patient trajectories using ICD-coded visit sequences, where each visit is a bag of diagnosis codes drawn from a hierarchical taxonomy.
+
+### ICD Code Hierarchy
+
+The International Classification of Diseases (ICD) is a multi-level ontology with the following structure:
+*   Chapters (broad disease systems; e.g., Nervous system disorders)
+*   Blocks (narrower regional groupings)
+*   Categories
+*   Subcategories (fine-grained clinical conditions)
+
+Let $\mathcal{V}$ denote the set of codes. The ICD hierarchy can be expressed as a directed tree (or DAG)
+$G = (V, E)$,
+where edges represent parent–child “is-a” relationships. The depth and branching factor of this tree induce a natural geometric prior: clinically similar codes lie close in the tree, while unrelated codes lie far apart.
+
+This ontological structure motivates the use of hyperbolic embeddings, where geodesic distance increases exponentially with radius, mirroring the exponential expansion of hierarchical taxonomies.
+
+### Definition of a Visit
+
+A visit corresponds to one encounter with the healthcare system—such as an admission, outpatient consultation, or emergency room event. Each visit is represented as a set of ICD diagnosis codes:
+$$ \text{Visit}_t = \{ c_1, c_2, \dots, c_k \}, \qquad c_i \in \mathcal{V}. $$
+
+Visits contain no inherent ordering among codes, which is why our encoder operates on code sets using tangent-space pooling, attention, or Einstein midpoint averaging.
+
+### Patient Trajectories
+
+A patient trajectory is a temporally ordered sequence of visits:
+$$ \mathcal{T} = [\text{Visit}_1, \text{Visit}_2, \dots, \text{Visit}_T]. $$
+
+Each trajectory reflects longitudinal disease evolution and captures both local co-occurrence patterns (within visits) and global transitions across time.
+
+### Relevance for Generative Modeling
+
+In the hyperbolic diffusion framework described earlier, ICD codes serve as the discrete tokens that must be reconstructed from continuous latent visit representations. The mapping
+$$ \text{codes} \rightarrow \text{visit vector} \rightarrow \text{denoised latent} \rightarrow \text{codes} $$
+is only approximate unless an explicit decoder is trained. The ICD hierarchy is further used as a structural signal for evaluating embedding geometry, synthetic trajectory realism, and the preservation of clinical semantics.
+
+Hyperbolic geometry is expected to excel at capturing:
+*   hierarchical separation between disease families,
+*   depth-sensitive representations,
+*   and exponential branching seen in deeper ICD levels.
+
+This section clarifies the clinical entities underlying the toy ICD datasets and motivates the architectural decisions in the remainder of the document.
 
 ---
 
