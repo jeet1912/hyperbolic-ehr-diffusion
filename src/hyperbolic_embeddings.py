@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import geoopt
-
+from torch.nn.utils.rnn import pad_sequence
 
 class HyperbolicCodeEmbedding(nn.Module):
     def __init__(self, num_codes: int, dim: int = 16, c: float = 1.0):
@@ -52,37 +52,49 @@ class VisitEncoder(nn.Module):
 
 
 class HyperbolicVisitEncoder(nn.Module):
-    """
-    SOTA hyperbolic visit encoder using Einstein midpoint.
-    This is the one that finally beats mean pooling by miles.
-    """
     def __init__(self, code_embedding, pad_idx: int):
         super().__init__()
         self.code_embedding = code_embedding
         self.manifold = code_embedding.manifold
         self.pad_idx = pad_idx
+        # Get dimension from the embedding tensor directly
+        self.dim = code_embedding.emb.size(-1)
 
-    def forward(self, flat_visits):
+    def forward(self, flat_visits: list):
         """
-        flat_visits: list of LongTensor (one per visit)
-        returns: [num_visits, dim] tangent vectors at origin
+        flat_visits: list of LongTensor (variable length)
         """
-        latents = []
-        device = next(self.code_embedding.parameters()).device
-
-        for ids in flat_visits:
-            ids = ids[ids != self.pad_idx]
-            if len(ids) == 0:
-                zero = torch.zeros(self.code_embedding.emb.size(-1), device=device)
-                latents.append(zero)
-                continue
-
-            z = self.code_embedding(ids)  # [k, dim] on Poincaré ball
-
-            # Einstein midpoint = hyperbolic barycenter
-            midpoint = self.manifold.midpoint(z.unsqueeze(0))  # [1, 1, dim]
-            tangent = self.manifold.logmap0(midpoint).squeeze(0)  # [dim]
-
-            latents.append(tangent)
-
-        return torch.stack(latents)
+        device = self.code_embedding.emb.device
+        
+        # 1. Pad sequence: [Batch, Max_Len]
+        # We assume flat_visits contains LongTensors
+        padded_visits = pad_sequence(flat_visits, batch_first=True, padding_value=self.pad_idx).to(device)
+        
+        # 2. Create Mask: [Batch, Max_Len] (1 for Real, 0 for Pad)
+        mask = (padded_visits != self.pad_idx).float()
+        
+        # 3. Handle Empty Visits (Prevent NaN division later)
+        # Add epsilon to sum to avoid division by zero for empty sets
+        mask_sum = mask.sum(dim=1, keepdim=True)
+        mask_sum[mask_sum == 0] = 1.0 
+        
+        # Normalize weights: sum(w) = 1 per row
+        weights = mask / mask_sum
+        
+        # 4. Embed everything: [Batch, Max_Len, Dim]
+        z = self.code_embedding(padded_visits)
+        
+        # 5. Batched Einstein Midpoint
+        # geoopt can handle weighted average in one massive matrix op
+        # reducedim=1 collapses the 'sequence length' dimension
+        midpoint = self.manifold.weighted_midpoint(z, weights=weights, reducedim=[1])
+        
+        # 6. Map to Tangent Space
+        tangent = self.manifold.logmap0(midpoint)
+        
+        # 7. Explicitly zero out empty visits
+        # (Midpoint of padded zeros is technically origin, but just to be safe)
+        is_empty = (mask.sum(dim=1, keepdim=True) == 0)
+        tangent = torch.where(is_empty, torch.zeros_like(tangent), tangent)
+        
+        return tangent

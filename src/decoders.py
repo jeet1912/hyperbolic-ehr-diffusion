@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
-import geoopt
-import geoopt.layers
+import geoopt 
 
 class VisitDecoder(nn.Module):
     """
@@ -100,8 +99,8 @@ class StrongVisitDecoder(nn.Module):
 
 class HyperbolicDistanceDecoder(nn.Module):
     """
-    hyperbolic decoder:
-    - Optional tiny hyperbolic linear layer
+    Hyperbolic decoder:
+    - Optional tiny hyperbolic linear (manual Möbius matrix-vector mul)
     - Distance-based logits
     - Temperature scheduling
     - Code-frequency-aware negative sampling
@@ -116,17 +115,19 @@ class HyperbolicDistanceDecoder(nn.Module):
         self.manifold = manifold
         self.code_emb = code_embedding
         self.dim = code_embedding.size(-1)
+        self.num_codes = code_embedding.size(-2)
         self.use_hyper_lin = use_hyper_lin
         self.code_freq = code_freq  # for frequency-aware bias
+        device = code_embedding.device
 
-        # Tiny hyperbolic linear (Möbius matrix multiplication)
+        # Tiny hyperbolic linear: learnable Möbius matrix M and bias b
         if use_hyper_lin:
-            self.hyper_lin = geoopt.layers.PoincareMLP(
-                in_features=self.dim,
-                out_features=self.dim,
-                c=manifold.c,
-                num_layers=1  # just one layer is enough
-            )
+            # M: [dim, dim] learnable weight matrix
+            self.M = nn.Parameter(torch.randn(self.dim, self.dim, device=device) * 0.1)
+            # b: [dim] learnable bias vector
+            self.b = nn.Parameter(torch.randn(self.dim, device=device) * 0.1)
+            # Project initial params to manifold (optional stability)
+            self.b.data = manifold.projx(self.b.data.unsqueeze(0)).squeeze(0)
 
         # Temperature (will be updated externally)
         self.register_buffer("temperature", torch.tensor(init_temperature))
@@ -136,6 +137,14 @@ class HyperbolicDistanceDecoder(nn.Module):
         if code_freq is not None:
             freq_bias = torch.log(code_freq + 1.0)  # avoid log(0)
             freq_bias = freq_bias - freq_bias.mean()
+            # If pad column exists, append neutral bias to match decoder output size
+            if freq_bias.shape[0] == self.num_codes - 1:
+                pad_bias = torch.zeros(1, device=freq_bias.device, dtype=freq_bias.dtype)
+                freq_bias = torch.cat([freq_bias, pad_bias], dim=0)
+            elif freq_bias.shape[0] != self.num_codes:
+                raise ValueError(
+                    f"code_freq length {freq_bias.shape[0]} does not match decoder codes {self.num_codes}"
+                )
             self.register_buffer("freq_bias", freq_bias * 0.5)  # scale gently
         else:
             self.register_buffer("freq_bias", None)
@@ -153,9 +162,12 @@ class HyperbolicDistanceDecoder(nn.Module):
 
         # Optional tiny hyperbolic transformation
         if self.use_hyper_lin:
-            v_manifold = self.manifold.expmap0(v_flat)
-            v_manifold = self.hyper_lin(v_manifold)
-            v_flat = self.manifold.logmap0(v_manifold)
+            v_manifold = self.manifold.expmap0(v_flat)  # [N, dim] on ball
+            # Möbius linear approximation: matrix multiply + bias in the ball
+            v_manifold = self.manifold.mobius_matvec(self.M, v_manifold)
+            bias = self.b.unsqueeze(0).expand_as(v_manifold)
+            v_manifold = self.manifold.mobius_add(v_manifold, bias)
+            v_flat = self.manifold.logmap0(v_manifold)  # Back to tangent [N, dim]
 
         # Back to manifold for distance computation
         v_manifold = self.manifold.expmap0(v_flat)  # [N, dim]
