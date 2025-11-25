@@ -413,7 +413,13 @@ def run_experiment(embeddingType, hier, traj_splits, experiment_name, device, n_
 
     velocity_model = TrajectoryVelocityModel(dim=dim, n_layers=6, n_heads=8, ff_dim=1024).to(device)
     codes_per_visit = 4
-    lambda_recon_values = [1.0, 10.0, 100.0, 1000.0]
+    if embeddingType == "hyperbolic":
+        if hier.max_depth <= 2:
+            lambda_recon_values = [2000.0, 3000.0]
+        else:
+            lambda_recon_values = [3000.0, 4000.0, 5000.0]
+    else:
+        lambda_recon_values = []
 
     results = []
     for lambda_recon in lambda_recon_values:
