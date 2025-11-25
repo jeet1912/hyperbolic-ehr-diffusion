@@ -215,6 +215,7 @@ def run_epoch(loader, velocity_model, visit_enc, visit_dec, hier,
     for module in modules:
         module.train() if is_training else module.eval()
     clip_params = collect_unique_params(*modules) if is_training else None
+
     total_loss = 0.0
     total_samples = 0
     context = torch.enable_grad if is_training else torch.no_grad
@@ -413,8 +414,6 @@ def run_experiment(embeddingType, hier, traj_splits, experiment_name, device, n_
     velocity_model = TrajectoryVelocityModel(dim=dim, n_layers=6, n_heads=8, ff_dim=1024).to(device)
     codes_per_visit = 4
     lambda_recon_values = [1.0, 10.0, 100.0, 1000.0]
-    if embeddingType == "euclidean":
-        lambda_recon_values = [val for val in lambda_recon_values if 100.0 <= val <= 1000.0]
 
     results = []
     for lambda_recon in lambda_recon_values:
