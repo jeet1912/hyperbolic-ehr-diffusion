@@ -311,6 +311,9 @@ Sample trajectory (euclidean) 3:
   Visit 6: ['C113', 'C134', 'C201', 'C30']
 Tree-Embedding Correlation (lambda_recon=1000.0): 0.0527
 Synthetic (euclidean, lambda_recon=1000.0) stats (N=1000): {'mean_depth': 1.642375, 'std_depth': 0.5588494365285996, 'mean_tree_dist': 2.889705882352941, 'std_tree_dist': 1.0497615416368438, 'mean_root_purity': 0.5011666666666666, 'std_root_purity': 0.15240671099251357}
+
+[Summary] depth2_final | euclidean | lambda_recon=1.0: best_val=1.832076, test_recall= 0.0672, corr=-0.0216
+[Summary] depth2_final | euclidean | lambda_recon=10.0: best_val= 1.874482, test_recall=0.2493, corr=0.0488
 [Summary] depth2_final | euclidean | lambda_recon=100.0: best_val=2.030545, test_recall=0.8702, corr=-0.0155
 [Summary] depth2_final | euclidean | lambda_recon=1000.0: best_val=2.439485, test_recall=0.9227, corr=0.0527
 
