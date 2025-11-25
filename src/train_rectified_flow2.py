@@ -417,7 +417,7 @@ def run_experiment(embeddingType, hier, traj_splits, experiment_name, device, n_
         if hier.max_depth <= 2:
             lambda_recon_values = [2000.0, 3000.0]
         else:
-            lambda_recon_values = [3000.0, 4000.0, 5000.0]
+            lambda_recon_values = [1800, 2000]  
     else:
         lambda_recon_values = []
 
