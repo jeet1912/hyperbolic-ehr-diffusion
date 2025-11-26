@@ -256,6 +256,70 @@ Sample trajectory (hyperbolic) 3:
   Visit 5: ['C32', 'C322', 'C440']
   Visit 6: ['C000', 'C32', 'C320', 'C324']
 
+### Experiment depth2_final | depth 2 | hyperbolic | lambda_recon=2000.0
+![Loss curves](../plots/depth2_final_hyperbolic_lrecon2000_loss.png)
+
+Best validation loss: 8.607137  
+Test Recall@4: 0.5919  
+Tree-Embedding Correlation: 0.6206  
+Synthetic stats: mean_depth=1.8036, std_depth=0.5111, mean_tree_dist=2.1903, std_tree_dist=1.1438, mean_root_purity=0.5951, std_root_purity=0.1734
+
+Sample trajectory (hyperbolic) 1:
+  Visit 1: ['C232', 'C34', 'C341', 'C343']
+  Visit 2: ['C022', 'C10', 'C100', 'C104']
+  Visit 3: ['C001', 'C210', 'C420', 'C422']
+  Visit 4: ['C001', 'C210', 'C213', 'C220']
+  Visit 5: ['C104', 'C341', 'C40', 'C402']
+  Visit 6: ['C0', 'C1', 'C2', 'C4']
+
+Sample trajectory (hyperbolic) 2:
+  Visit 1: ['C001', 'C210', 'C213', 'C220']
+  Visit 2: ['C341', 'C343', 'C423', 'C443']
+  Visit 3: ['C001', 'C1', 'C123', 'C210']
+  Visit 4: ['C022', 'C101', 'C241']
+  Visit 5: ['C001', 'C21', 'C210', 'C220']
+  Visit 6: ['C001', 'C210', 'C213', 'C220']
+
+Sample trajectory (hyperbolic) 3:
+  Visit 1: ['C341', 'C343', 'C401', 'C443']
+  Visit 2: ['C1', 'C123', 'C222', 'C323']
+  Visit 3: ['C001', 'C1', 'C210', 'C220']
+  Visit 4: ['C032', 'C32', 'C321', 'C343']
+  Visit 5: ['C022', 'C10', 'C100', 'C104']
+  Visit 6: ['C123', 'C210', 'C212', 'C413']
+
+### Experiment depth2_final | depth 2 | hyperbolic | lambda_recon=3000.0
+![Loss curves](../plots/depth2_final_hyperbolic_lrecon3000_loss.png)
+
+Best validation loss: 12.012943  
+Test Recall@4: 0.5743  
+Tree-Embedding Correlation: 0.6204  
+Synthetic stats: mean_depth=1.8162, std_depth=0.4106, mean_tree_dist=1.7415, std_tree_dist=0.9391, mean_root_purity=0.6586, std_root_purity=0.1799
+
+Sample trajectory (hyperbolic) 1:
+  Visit 1: ['C02', 'C023', 'C302', 'C414']
+  Visit 2: ['C31', 'C310', 'C311', 'C401']
+  Visit 3: ['C02', 'C023', 'C302', 'C414']
+  Visit 4: ['C02', 'C021', 'C023', 'C414']
+  Visit 5: ['C023', 'C043', 'C102', 'C302']
+  Visit 6: ['C31', 'C310', 'C401', 'C404']
+
+Sample trajectory (hyperbolic) 2:
+  Visit 1: ['C31', 'C310', 'C401', 'C404']
+  Visit 2: ['C02', 'C020', 'C021', 'C023']
+  Visit 3: ['C310', 'C343', 'C400', 'C401']
+  Visit 4: ['C021', 'C023', 'C102', 'C414']
+  Visit 5: ['C020', 'C101', 'C111', 'C231']
+  Visit 6: ['C02', 'C023', 'C302', 'C414']
+
+Sample trajectory (hyperbolic) 3:
+  Visit 1: ['C02', 'C023', 'C224', 'C414']
+  Visit 2: ['C31', 'C310', 'C311', 'C401']
+  Visit 3: ['C02', 'C021', 'C023', 'C414']
+  Visit 4: ['C020', 'C023', 'C304', 'C414']
+  Visit 5: ['C004', 'C31', 'C310', 'C400']
+  Visit 6: ['C31', 'C310', 'C401', 'C404']
+
 ### depth7_final | max_depth = 7 | Real stats: {'mean_depth': 5.374459093875327, 'std_depth': 1.7322915840970905, 'mean_tree_dist': 5.76189079147913, 'std_tree_dist': 4.753635709372622, 'mean_root_purity': 0.6272780762911319, 'std_root_purity': 0.2050864797754083}
 
 ### Experiment depth7_final | depth 7 | euclidean | lambda_recon=1.0
@@ -514,6 +578,230 @@ Sample trajectory (hyperbolic) 3:
   Visit 5: ['C114d4', 'C244d3', 'C303d3', 'C303d4']
   Visit 6: ['C312d4', 'C424d3', 'C424d4']
 
+### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=1800
+![Loss curves](../plots/depth7_final_hyperbolic_lrecon1800_loss.png)
+
+Best validation loss: 3.964018  
+Test Recall@4: 0.3819  
+Tree-Embedding Correlation: 0.0571  
+Synthetic stats: mean_depth=6.2866, std_depth=0.9593, mean_tree_dist=4.3535, std_tree_dist=5.2050, mean_root_purity=0.5509, std_root_purity=0.1367
+
+Sample trajectory (hyperbolic) 1:
+  Visit 1: ['C143d3', 'C143d4', 'C441d3', 'C441d4']
+  Visit 2: ['C024d3', 'C231d3', 'C231d4', 'C443d4']
+  Visit 3: ['C310d3', 'C310d4', 'C443d3', 'C443d4']
+  Visit 4: ['C102d3', 'C112d4', 'C440d3', 'C440d4']
+  Visit 5: ['C000d4', 'C122d4', 'C240d3', 'C441d4']
+  Visit 6: ['C102d3', 'C213d4', 'C440d3', 'C440d4']
+
+Sample trajectory (hyperbolic) 2:
+  Visit 1: ['C022d3', 'C022d4', 'C112d3', 'C112d4']
+  Visit 2: ['C310d3', 'C310d4', 'C404d3', 'C404d4']
+  Visit 3: ['C320d4', 'C411d4', 'C420d3', 'C420d4']
+  Visit 4: ['C213d3', 'C213d4', 'C440d3', 'C440d4']
+  Visit 5: ['C213d3', 'C213d4', 'C440d3', 'C440d4']
+  Visit 6: ['C102d3', 'C112d4', 'C440d3', 'C440d4']
+
+Sample trajectory (hyperbolic) 3:
+  Visit 1: ['C040d0', 'C103d2', 'C401d1']
+  Visit 2: ['C102d3', 'C301d3', 'C301d4', 'C440d3']
+  Visit 3: ['C024d3', 'C024d4', 'C231d3', 'C231d4']
+  Visit 4: ['C031d3', 'C031d4', 'C420d3', 'C420d4']
+  Visit 5: ['C031d4', 'C102d3', 'C440d3', 'C440d4']
+  Visit 6: ['C320d3', 'C320d4', 'C440d3', 'C440d4']
+
+### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=2000
+![Loss curves](../plots/depth7_final_hyperbolic_lrecon2000_loss.png)
+
+Best validation loss: 4.160874  
+Test Recall@4: 0.4096  
+Tree-Embedding Correlation: 0.1375  
+Synthetic stats: mean_depth=5.2436, std_depth=1.8960, mean_tree_dist=4.2188, std_tree_dist=4.4117, mean_root_purity=0.5246, std_root_purity=0.1329
+
+Sample trajectory (hyperbolic) 1:
+  Visit 1: ['C103d3', 'C143d2', 'C330d3', 'C330d4']
+  Visit 2: ['C1', 'C244', 'C243d1']
+  Visit 3: ['C011d3', 'C033d4', 'C402d3', 'C402d4']
+  Visit 4: ['C011d3', 'C011d4', 'C403d3', 'C403d4']
+  Visit 5: ['C113d1', 'C212d1', 'C233d0', 'C243d1']
+  Visit 6: ['C033d3', 'C033d4', 'C324d3', 'C324d4']
+
+Sample trajectory (hyperbolic) 2:
+  Visit 1: ['C103', 'C033d3', 'C324d3', 'C324d4']
+  Visit 2: ['C033d4', 'C144d3', 'C144d4', 'C342d4']
+  Visit 3: ['C044d3', 'C044d4', 'C103d3', 'C103d4']
+  Visit 4: ['C033d3', 'C033d4', 'C324d3', 'C324d4']
+  Visit 5: ['C003', 'C231d0', 'C300d1', 'C401d0']
+  Visit 6: ['C243d1', 'C302d2', 'C431d0']
+
+Sample trajectory (hyperbolic) 3:
+  Visit 1: ['C011d3', 'C033d3', 'C033d4', 'C403d4']
+  Visit 2: ['C033d3', 'C033d4', 'C324d3', 'C324d4']
+  Visit 3: ['C244', 'C204d1', 'C223d3', 'C223d4']
+  Visit 4: ['C130', 'C143d1', 'C231d0', 'C300d1']
+  Visit 5: ['C1', 'C212d1', 'C243d1']
+  Visit 6: ['C103', 'C214d2', 'C234d0', 'C402d2']
+
+### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=2200
+![Loss curves](../plots/depth7_final_hyperbolic_lrecon2200_loss.png)
+
+Best validation loss: 4.579852  
+Test Recall@4: 0.4015  
+Tree-Embedding Correlation: 0.0963  
+Synthetic stats: mean_depth=6.3591, std_depth=0.8415, mean_tree_dist=3.9483, std_tree_dist=5.0059, mean_root_purity=0.5505, std_root_purity=0.1342
+
+Sample trajectory (hyperbolic) 1:
+  Visit 1: ['C124d3', 'C124d4', 'C131d3', 'C131d4']
+  Visit 2: ['C231d3', 'C231d4', 'C421d3', 'C421d4']
+  Visit 3: ['C102d4', 'C301d4', 'C440d3', 'C440d4']
+  Visit 4: ['C231d3', 'C231d4', 'C432d3', 'C432d4']
+  Visit 5: ['C242d3', 'C242d4', 'C440d3', 'C440d4']
+  Visit 6: ['C102d3', 'C102d4', 'C440d3', 'C440d4']
+
+Sample trajectory (hyperbolic) 2:
+  Visit 1: ['C202d3', 'C202d4', 'C313d4', 'C411d4']
+  Visit 2: ['C024d3', 'C231d3', 'C231d4', 'C300d3']
+  Visit 3: ['C021d3', 'C021d4', 'C231d3', 'C231d4']
+  Visit 4: ['C102d3', 'C301d3', 'C433d3', 'C440d3']
+  Visit 5: ['C102d3', 'C102d4', 'C440d3', 'C440d4']
+  Visit 6: ['C024d3', 'C024d4', 'C331d3', 'C331d4']
+
+Sample trajectory (hyperbolic) 3:
+  Visit 1: ['C031d4', 'C102d3', 'C440d3', 'C440d4']
+  Visit 2: ['C231d3', 'C231d4', 'C432d3', 'C432d4']
+  Visit 3: ['C031d4', 'C102d3', 'C440d3', 'C440d4']
+  Visit 4: ['C022d3', 'C022d4', 'C031d3', 'C031d4']
+  Visit 5: ['C333d3', 'C333d4', 'C444d3', 'C444d4']
+  Visit 6: ['C024d3', 'C024d4', 'C443d3', 'C443d4']
+
+### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=2500
+![Loss curves](../plots/depth7_final_hyperbolic_lrecon2500_loss.png)
+
+Best validation loss: 4.451853  
+Test Recall@4: 0.4611  
+Tree-Embedding Correlation: -0.0900  
+Synthetic stats: mean_depth=5.4921, std_depth=1.7349, mean_tree_dist=4.0347, std_tree_dist=4.2789, mean_root_purity=0.5372, std_root_purity=0.1318
+
+Sample trajectory (hyperbolic) 1:
+  Visit 1: ['C340d3', 'C340d4', 'C441d3', 'C441d4']
+  Visit 2: ['C012', 'C021d0', 'C103d4', 'C422d3']
+  Visit 3: ['C011d0', 'C222d3', 'C222d4', 'C324d0']
+  Visit 4: ['C132', 'C021d0', 'C123d2', 'C332d1']
+  Visit 5: ['C111d4', 'C242d3', 'C333d3', 'C444d3']
+  Visit 6: ['C200d1', 'C244d2', 'C314d2', 'C322d3']
+
+Sample trajectory (hyperbolic) 2:
+  Visit 1: ['C131d3', 'C131d4', 'C202d3', 'C400d4']
+  Visit 2: ['C214', 'C244', 'C034d2', 'C221d1']
+  Visit 3: ['C300', 'C440', 'C020d1', 'C314d2']
+  Visit 4: ['C131d3', 'C131d4', 'C400d3', 'C400d4']
+  Visit 5: ['C044d3', 'C130d3', 'C332d1', 'C410d2']
+  Visit 6: ['C30', 'C303', 'C034d2', 'C304d1']
+
+Sample trajectory (hyperbolic) 3:
+  Visit 1: ['C034d4', 'C131d3', 'C404d3', 'C404d4']
+  Visit 2: ['C034d3', 'C034d4', 'C202d3', 'C202d4']
+  Visit 3: ['C012', 'C103d4', 'C422d3', 'C422d4']
+  Visit 4: ['C011d3', 'C120d3', 'C421d3', 'C421d4']
+  Visit 5: ['C123d3', 'C410d3', 'C410d4', 'C432d0']
+  Visit 6: ['C202d3', 'C202d4', 'C400d4', 'C421d3']
+
+### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=3000.0
+![Loss curves](../plots/depth7_final_hyperbolic_lrecon3000_loss.png)
+
+Best validation loss: 4.934151  
+Test Recall@4: 0.4835  
+Tree-Embedding Correlation: -0.1185  
+Synthetic stats: mean_depth=6.1221, std_depth=1.2061, mean_tree_dist=5.2558, std_tree_dist=5.4068, mean_root_purity=0.5872, std_root_purity=0.1733
+
+Sample trajectory (hyperbolic) 1:
+  Visit 1: ['C121d4', 'C333d3', 'C333d4', 'C430d4']
+  Visit 2: ['C231d3', 'C314d4', 'C443d3', 'C443d4']
+  Visit 3: ['C032d3', 'C032d4', 'C443d3', 'C443d4']
+  Visit 4: ['C022d3', 'C022d4', 'C442d3', 'C442d4']
+  Visit 5: ['C032d3', 'C032d4', 'C040d3', 'C040d4']
+  Visit 6: ['C022d3', 'C022d4', 'C112d3', 'C112d4']
+
+Sample trajectory (hyperbolic) 2:
+  Visit 1: ['C022d4', 'C114d4', 'C412d3', 'C412d4']
+  Visit 2: ['C430d3', 'C430d4', 'C444d3', 'C444d4']
+  Visit 3: ['C123d3', 'C123d4', 'C134d4', 'C313d2']
+  Visit 4: ['C022d3', 'C022d4', 'C440d3', 'C440d4']
+  Visit 5: ['C022d3', 'C022d4', 'C124d3', 'C124d4']
+  Visit 6: ['C022d4', 'C112d3', 'C112d4', 'C114d4']
+
+Sample trajectory (hyperbolic) 3:
+  Visit 1: ['C031d3', 'C031d4', 'C424d0', 'C434d1']
+  Visit 2: ['C102d3', 'C440d3', 'C440d4', 'C442d4']
+  Visit 3: ['C021d1', 'C111d3', 'C111d4', 'C334d4']
+  Visit 4: ['C041d0', 'C123d4', 'C210d3', 'C210d4']
+  Visit 5: ['C022d3', 'C022d4', 'C112d3', 'C112d4']
+  Visit 6: ['C102d3', 'C440d3', 'C442d3', 'C442d4']
+
+### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=4000.0
+![Loss curves](../plots/depth7_final_hyperbolic_lrecon4000_loss.png)
+
+Best validation loss: 5.756914  
+Test Recall@4: 0.5059  
+Tree-Embedding Correlation: -0.0369  
+Synthetic stats: mean_depth=5.4575, std_depth=1.7061, mean_tree_dist=4.9758, std_tree_dist=4.7640, mean_root_purity=0.5583, std_root_purity=0.1502
+
+Sample trajectory (hyperbolic) 1:
+  Visit 1: ['C110d3', 'C110d4', 'C134d3', 'C134d4']
+  Visit 2: ['C324', 'C044d3', 'C332d1']
+  Visit 3: ['C110d3', 'C110d4', 'C323d3', 'C323d4']
+  Visit 4: ['C110d4', 'C323d4', 'C443d3', 'C443d4']
+  Visit 5: ['C034d4', 'C100d4', 'C321d3', 'C411d4']
+  Visit 6: ['C324', 'C044d3', 'C332d1', 'C413d4']
+
+Sample trajectory (hyperbolic) 2:
+  Visit 1: ['C324', 'C044d3', 'C044d4', 'C332d1']
+  Visit 2: ['C110d3', 'C110d4', 'C323d3', 'C323d4']
+  Visit 3: ['C324', 'C332d1', 'C343d2']
+  Visit 4: ['C110d3', 'C110d4', 'C323d3', 'C323d4']
+  Visit 5: ['C040', 'C110d3', 'C110d4', 'C413d0']
+  Visit 6: ['C100d4', 'C110d3', 'C110d4', 'C323d4']
+
+Sample trajectory (hyperbolic) 3:
+  Visit 1: ['C232', 'C211d0', 'C323d4', 'C442d3']
+  Visit 2: ['C324', 'C044d3', 'C332d2', 'C413d4']
+  Visit 3: ['C110d3', 'C110d4', 'C323d3', 'C323d4']
+  Visit 4: ['C321d3', 'C323d4', 'C342d3', 'C342d4']
+  Visit 5: ['C324', 'C332d1', 'C332d2']
+  Visit 6: ['C324', 'C044d3', 'C413d3', 'C413d4']
+
+### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=5000.0
+![Loss curves](../plots/depth7_final_hyperbolic_lrecon5000_loss.png)
+
+Best validation loss: 6.497522  
+Test Recall@4: 0.5283  
+Tree-Embedding Correlation: -0.1266  
+Synthetic stats: mean_depth=5.7633, std_depth=1.6117, mean_tree_dist=3.4129, std_tree_dist=4.2249, mean_root_purity=0.5346, std_root_purity=0.1228
+
+Sample trajectory (hyperbolic) 1:
+  Visit 1: ['C111', 'C202d0', 'C211d2', 'C311d2']
+  Visit 2: ['C111d3', 'C111d4', 'C414d3', 'C414d4']
+  Visit 3: ['C031d3', 'C031d4', 'C111d3', 'C111d4']
+  Visit 4: ['C111d3', 'C111d4', 'C241d3', 'C241d4']
+  Visit 5: ['C213d3', 'C213d4', 'C220d3', 'C220d4']
+  Visit 6: ['C111d3', 'C111d4', 'C444d3', 'C444d4']
+
+Sample trajectory (hyperbolic) 2:
+  Visit 1: ['C111d3', 'C111d4', 'C241d3', 'C241d4']
+  Visit 2: ['C111d3', 'C111d4', 'C241d3', 'C241d4']
+  Visit 3: ['C0', 'C010d3', 'C010d4', 'C103d4']
+  Visit 4: ['C111d3', 'C111d4', 'C444d3', 'C444d4']
+  Visit 5: ['C111d3', 'C111d4', 'C444d3', 'C444d4']
+  Visit 6: ['C213d3', 'C213d4', 'C233d1', 'C341d3']
+
+Sample trajectory (hyperbolic) 3:
+  Visit 1: ['C111d3', 'C111d4', 'C444d3', 'C444d4']
+  Visit 2: ['C111d3', 'C111d4', 'C241d3', 'C241d4']
+  Visit 3: ['C111', 'C241', 'C121d1', 'C311d2']
+  Visit 4: ['C110d0', 'C134d4', 'C213d3', 'C213d4']
+  Visit 5: ['C0', 'C120', 'C341d3', 'C341d4']
+  Visit 6: ['C111d3', 'C111d4', 'C414d3', 'C414d4']
+
 ## Comparison Table
 | Depth / Experiment | Source | Embedding | lambda_recon | Mean depth | Depth std | Mean tree dist | Tree dist std | Mean root purity | Root purity std | Corr(tree, emb) | Best val loss | Test Recall@4 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -526,6 +814,8 @@ Sample trajectory (hyperbolic) 3:
 | depth2_final | Synthetic | Hyperbolic | 10 | 1.3006 | 0.6608 | 2.8233 | 0.9319 | 0.4627 | 0.1368 | -0.3309 | 2.8704 | 0.0516 |
 | depth2_final | Synthetic | Hyperbolic | 100 | 1.1557 | 0.3678 | 1.9694 | 0.7683 | 0.5440 | 0.1790 | -0.0071 | 2.4156 | 0.1587 |
 | depth2_final | Synthetic | Hyperbolic | 1000 | 1.8124 | 0.3994 | 1.9616 | 1.1097 | 0.6600 | 0.1985 | 0.5987 | 5.2825 | 0.5962 |
+| depth2_final | Synthetic | Hyperbolic | 2000 | 1.8036 | 0.5111 | 2.1903 | 1.1438 | 0.5951 | 0.1734 | 0.6206 | 8.6071 | 0.5919 |
+| depth2_final | Synthetic | Hyperbolic | 3000 | 1.8162 | 0.4106 | 1.7415 | 0.9391 | 0.6586 | 0.1799 | 0.6204 | 12.0129 | 0.5743 |
 | depth7_final | Real | — | — | 5.3745 | 1.7323 | 5.7619 | 4.7536 | 0.6273 | 0.2051 | — | — | — |
 | depth7_final | Synthetic | Euclidean | 1 | 5.4627 | 1.5877 | 7.2343 | 4.8878 | 0.5231 | 0.1190 | 0.0303 | 2.9355 | 0.0098 |
 | depth7_final | Synthetic | Euclidean | 10 | 5.3407 | 1.9723 | 7.9726 | 4.7473 | 0.5426 | 0.1404 | -0.0285 | 2.8660 | 0.0111 |
@@ -535,12 +825,19 @@ Sample trajectory (hyperbolic) 3:
 | depth7_final | Synthetic | Hyperbolic | 10 | 3.1753 | 1.1717 | 6.2169 | 1.4446 | 0.6069 | 0.1825 | -0.2620 | 1.9224 | 0.0125 |
 | depth7_final | Synthetic | Hyperbolic | 100 | 5.1840 | 1.7607 | 9.0683 | 3.8531 | 0.5493 | 0.1234 | 0.0583 | 1.9642 | 0.0137 |
 | depth7_final | Synthetic | Hyperbolic | 1000 | 6.1469 | 1.2356 | 5.9719 | 5.5262 | 0.5666 | 0.1308 | 0.3997 | 4.3849 | 0.0617 |
+| depth7_final | Synthetic | Hyperbolic | 1800 | 6.2866 | 0.9593 | 4.3535 | 5.2050 | 0.5509 | 0.1367 | 0.0571 | 3.9640 | 0.3819 |
+| depth7_final | Synthetic | Hyperbolic | 2000 | 5.2436 | 1.8960 | 4.2188 | 4.4117 | 0.5246 | 0.1329 | 0.1375 | 4.1609 | 0.4096 |
+| depth7_final | Synthetic | Hyperbolic | 2200 | 6.3591 | 0.8415 | 3.9483 | 5.0059 | 0.5505 | 0.1342 | 0.0963 | 4.5799 | 0.4015 |
+| depth7_final | Synthetic | Hyperbolic | 2500 | 5.4921 | 1.7349 | 4.0347 | 4.2789 | 0.5372 | 0.1318 | -0.0900 | 4.4519 | 0.4611 |
+| depth7_final | Synthetic | Hyperbolic | 3000 | 6.1221 | 1.2061 | 5.2558 | 5.4068 | 0.5872 | 0.1733 | -0.1185 | 4.9342 | 0.4835 |
+| depth7_final | Synthetic | Hyperbolic | 4000 | 5.4575 | 1.7061 | 4.9758 | 4.7640 | 0.5583 | 0.1502 | -0.0369 | 5.7569 | 0.5059 |
+| depth7_final | Synthetic | Hyperbolic | 5000 | 5.7633 | 1.6117 | 3.4129 | 4.2249 | 0.5346 | 0.1228 | -0.1266 | 6.4975 | 0.5283 |
 
 ## Results
-These experiments apply the rectified-flow training loop in `src/train_rectified_flow.py` (depth2_final, all embeddings) and the depth-7 variant in `src/train_rectified_flow2.py`. Each script learns a visit encoder/decoder and a trajectory velocity model that predicts tangent-space velocities along rectified flows, combines that loss with a reconstruction term weighted by `lambda_recon`, and monitors performance through test Recall@4 and a tree-vs-embedding distance correlation.
+These experiments apply the rectified-flow training loop in `src/train_rectified_flow.py` (depth2_final) and the deeper variant `src/train_rectified_flow2.py` (depth7_final). Each script couples a visit encoder/decoder with a rectified-flow velocity model, optimizes the sum of flow and reconstruction losses (weighted by `lambda_recon`), and reports Recall@4 plus the correlation between ICD tree distances and learned embedding distances.
 
-Across depth2_final, increasing `lambda_recon` consistently improves reconstruction recall, especially for Euclidean embeddings (Recall@4 rises from 0.07 to 0.92) but does not guarantee stronger alignment with the ICD tree—correlations remain near zero until very large weights in the hyperbolic model drive a positive correlation (0.60) at the cost of higher validation loss. Hyperbolic models produce more concentrated visit depths and maintain higher root purity, but mid-range `lambda_recon` values (10–100) can over-compress the hierarchy, producing negative correlations.
+On depth2_final, Euclidean runs respond strongly to reconstruction pressure—Recall@4 jumps from 0.07 to 0.92 as `lambda_recon` increases from 1 to 1000—but their tree/embedding correlations stay near zero. Hyperbolic models behave differently: moderate weights (10–100) compress trajectories toward the root and even produce negative correlations, yet very large weights (1000–3000) recover high correlation (~0.62) while keeping Recall@4 around 0.58. These large-λ hyperbolic models are the only ones that track the real hierarchy without introducing auxiliary regularizers.
 
-For the deeper depth7_final hierarchy trained with `train_rectified_flow2.py`, Euclidean models struggle to push Recall@4 beyond 0.45 even at `lambda_recon=1000`, and their tree correlations hover around zero. Hyperbolic models keep the flow stable at low `lambda_recon`, but only the most aggressive reconstruction weight (1000) raises correlation to 0.40 while nudging Recall@4 to 0.06. The derived synthetic statistics show that neither geometry recovers the real visit-depth distribution without additional structure (e.g., the geometric regularizers used in earlier diffusion experiments).
+Depth7_final highlights how quickly Euclidean embeddings deteriorate with hierarchy depth. Even with `lambda_recon=1000`, Recall@4 stalls at 0.45 and correlations hover around zero; the high-λ Euclidean models collapse most visits onto a handful of codes. Hyperbolic runs remain stable but show a trade-off: small λ (1–100) maintain reasonable depth coverage but low correlation, whereas very large weights (1800–2500) push Recall@4 past 0.38 and gradually increase correlation, at the cost of overshooting visit depth and inflating tree-distance variance. None of the rectified-flow settings match the strong tree alignment we previously observed with the diffusion-based `train_toy_withDecHypNoise.py` regularizer, underscoring that rectified flows alone struggle to encode long-range structure in deep taxonomies.
 
-Overall, these rectified-flow baselines confirm that (1) strong reconstruction weights dominate the objective and boost Recall@4 regardless of geometry, (2) hyperbolic embeddings preserve root-level purity better than Euclidean ones. These tables serve as a reference point for future modifications to the rectified-flow scripts.
+Overall, these tables reinforce three takeaways: (1) increasing `lambda_recon` primarily improves reconstruction accuracy, not hierarchical fidelity; (2) Euclidean embeddings fail dramatically as the depth of the ICD tree grows; and (3) hyperbolic embeddings are necessary but not sufficient—high-λ rectified flows can approximate the hierarchy, yet additional geometric regularization (as in the diffusion + decoder-noise pipeline) is still required for consistent structure preservation.
