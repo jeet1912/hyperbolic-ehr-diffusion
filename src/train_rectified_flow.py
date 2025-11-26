@@ -179,10 +179,17 @@ def sample_trajectories(
     return synthetic_trajs
 
 def compute_batch_loss(
-    flat_visits, B, L, visit_mask,
-    velocity_model, visit_enc, visit_dec,
+    flat_visits,
+    B,
+    L,
+    visit_mask,
+    velocity_model,
+    visit_enc,
+    visit_dec,
+    code_emb,
     hier,
-    lambda_recon=1000.0
+    lambda_recon=1000.0,
+    lambda_pair=0.01,
 ):
     latents = visit_enc(flat_visits).contiguous()        # [B*L, dim]
     dim = latents.shape[-1]
@@ -206,10 +213,25 @@ def compute_batch_loss(
     recon_loss = focal_loss(logits, targets, gamma=2.0, alpha=0.25)
 
     total_loss = flow_loss + lambda_recon * recon_loss
+    if lambda_pair > 0.0:
+        pair_reg = code_pair_loss(code_emb, hier, device=latents.device, num_pairs=512)
+        total_loss = total_loss + lambda_pair * pair_reg
     return total_loss
 
-def run_epoch(loader, velocity_model, visit_enc, visit_dec, hier,
-              device, embedding_type, codes_per_visit, lambda_recon, optimizer=None):
+def run_epoch(
+    loader,
+    velocity_model,
+    visit_enc,
+    visit_dec,
+    code_emb,
+    hier,
+    device,
+    embedding_type,
+    codes_per_visit,
+    lambda_recon,
+    lambda_pair,
+    optimizer=None,
+):
     is_training = optimizer is not None
     modules = [velocity_model, visit_enc, visit_dec]
     for module in modules:
@@ -224,10 +246,17 @@ def run_epoch(loader, velocity_model, visit_enc, visit_dec, hier,
             visit_mask = visit_mask.to(device)
 
             loss = compute_batch_loss(
-                flat_visits, B, L, visit_mask,
-                velocity_model, visit_enc, visit_dec,
+                flat_visits,
+                B,
+                L,
+                visit_mask,
+                velocity_model,
+                visit_enc,
+                visit_dec,
+                code_emb,
                 hier,
-                lambda_recon=lambda_recon
+                lambda_recon=lambda_recon,
+                lambda_pair=lambda_pair,
             )
 
             if is_training:
@@ -242,10 +271,21 @@ def run_epoch(loader, velocity_model, visit_enc, visit_dec, hier,
     return total_loss / max(total_samples, 1)
 
 def train_model(
-    velocity_model, code_emb, visit_enc, visit_dec,
-    train_loader, val_loader, hier, device,
-    embedding_type, codes_per_visit,
-    lambda_recon=1000.0, n_epochs=50, plot_dir="results/plots", tag="archFix"
+    velocity_model,
+    code_emb,
+    visit_enc,
+    visit_dec,
+    train_loader,
+    val_loader,
+    hier,
+    device,
+    embedding_type,
+    codes_per_visit,
+    lambda_recon=1000.0,
+    lambda_pair=0.01,
+    n_epochs=50,
+    plot_dir="results/plots",
+    tag="archFix",
 ):
     params = collect_unique_params(velocity_model, visit_enc, visit_dec)
     optimizer = torch.optim.AdamW(params, lr=3e-4, weight_decay=1e-5)
@@ -258,13 +298,35 @@ def train_model(
     epochs_without_improve = 0
 
     for epoch in range(1, n_epochs + 1):
-        train_loss = run_epoch(train_loader, velocity_model, visit_enc, visit_dec,
-                               hier, device, embedding_type, codes_per_visit,
-                               lambda_recon, optimizer=optimizer)
+        train_loss = run_epoch(
+            train_loader,
+            velocity_model,
+            visit_enc,
+            visit_dec,
+            code_emb,
+            hier,
+            device,
+            embedding_type,
+            codes_per_visit,
+            lambda_recon,
+            lambda_pair,
+            optimizer=optimizer,
+        )
 
-        val_loss = run_epoch(val_loader, velocity_model, visit_enc, visit_dec,
-                             hier, device, embedding_type, codes_per_visit,
-                             lambda_recon, optimizer=None)
+        val_loss = run_epoch(
+            val_loader,
+            velocity_model,
+            visit_enc,
+            visit_dec,
+            code_emb,
+            hier,
+            device,
+            embedding_type,
+            codes_per_visit,
+            lambda_recon,
+            lambda_pair,
+            optimizer=None,
+        )
 
         scheduler.step()
         if embedding_type == "hyperbolic":
@@ -412,14 +474,8 @@ def run_experiment(embeddingType, hier, traj_splits, experiment_name, device, n_
 
     velocity_model = TrajectoryVelocityModel(dim=dim, n_layers=6, n_heads=8, ff_dim=1024).to(device)
     codes_per_visit = 4
-    lambda_recon_values = []
-    if embeddingType == "euclidean":
-        lambda_recon_values = [val for val in lambda_recon_values if 100.0 <= val <= 1000.0]
-    else:
-        if hier.max_depth <= 2:
-            lambda_recon_values += [2000.0, 3000.0]
-        else:
-            lambda_recon_values += [2200, 2500]
+    lambda_recon_values = [2000.0]
+    lambda_pair = 0.01
 
     results = []
     for lambda_recon in lambda_recon_values:
@@ -444,6 +500,7 @@ def run_experiment(embeddingType, hier, traj_splits, experiment_name, device, n_
             embedding_type=embeddingType,
             codes_per_visit=codes_per_visit,
             lambda_recon=lambda_recon,
+            lambda_pair=lambda_pair,
             n_epochs=n_epochs,
             plot_dir=os.path.join("results", "plots"),
             tag=f"{experiment_name}_{embeddingType}_lrecon{int(lambda_recon)}"
@@ -472,7 +529,13 @@ def run_experiment(embeddingType, hier, traj_splits, experiment_name, device, n_
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--extra_depth", type=int, default=5, help="Extra depth for ToyICD hierarchy (0=depth2, 5=depth7)")
+    parser.add_argument(
+        "--depths",
+        type=int,
+        nargs="+",
+        default=[0, 5],
+        help="List of extra depths for ToyICD hierarchy (0=depth2, 5=depth7)",
+    )
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
     args = parser.parse_args()
 
@@ -489,25 +552,26 @@ def main():
     np.random.seed(42)
     random.seed(42)
 
-    hier = ToyICDHierarchy(extra_depth=args.extra_depth)
-    name = f"depth{hier.max_depth}_final"
+    for extra_depth in args.depths or [0, 5]:
+        hier = ToyICDHierarchy(extra_depth=extra_depth)
+        name = f"depth{hier.max_depth}_final"
 
-    trajs = sample_toy_trajectories(hier, num_patients=20000)
-    splits = split_trajectories(trajs)
-    real_stats = traj_stats(trajs, hier)
-    print(f"\n{name} | max_depth = {hier.max_depth} | Real stats: {real_stats}")
+        trajs = sample_toy_trajectories(hier, num_patients=20000)
+        splits = split_trajectories(trajs)
+        real_stats = traj_stats(trajs, hier)
+        print(f"\n{name} | max_depth = {hier.max_depth} | Real stats: {real_stats}")
 
-    for emb in ["hyperbolic"]:
-        print(f"\n--- Running {emb} ---")
-        results = run_experiment(
-            emb, hier, splits, name, device,
-            n_epochs=args.epochs,
-        )
-        for lambda_recon, best_val, test_recall, corr in results:
-            print(
-                f"[Summary] {name} | {emb} | lambda_recon={lambda_recon}: "
-                f"best_val={best_val:.6f}, test_recall={test_recall:.4f}, corr={corr:.4f}"
+        for emb in ["hyperbolic"]:
+            print(f"\n--- Running {emb} ---")
+            results = run_experiment(
+                emb, hier, splits, name, device,
+                n_epochs=args.epochs,
             )
+            for lambda_recon, best_val, test_recall, corr in results:
+                print(
+                    f"[Summary] {name} | {emb} | lambda_recon={lambda_recon}: "
+                    f"best_val={best_val:.6f}, test_recall={test_recall:.4f}, corr={corr:.4f}"
+                )
 
 if __name__ == "__main__":
     main()
