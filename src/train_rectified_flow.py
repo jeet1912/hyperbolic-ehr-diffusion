@@ -233,7 +233,7 @@ def run_epoch(
     optimizer=None,
 ):
     is_training = optimizer is not None
-    modules = [velocity_model, visit_enc, visit_dec]
+    modules = [velocity_model, visit_enc, visit_dec, code_emb]
     for module in modules:
         module.train() if is_training else module.eval()
     clip_params = collect_unique_params(*modules) if is_training else None
@@ -287,7 +287,7 @@ def train_model(
     plot_dir="results/plots",
     tag="archFix",
 ):
-    params = collect_unique_params(velocity_model, visit_enc, visit_dec)
+    params = collect_unique_params(velocity_model, visit_enc, visit_dec, code_emb)
     optimizer = torch.optim.AdamW(params, lr=3e-4, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs)
 

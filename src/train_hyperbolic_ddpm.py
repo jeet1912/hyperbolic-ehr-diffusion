@@ -220,13 +220,19 @@ def train_model(
     n_epochs,
     lr,
 ):
-    params = list(eps_model.parameters()) + list(code_emb.parameters()) + list(visit_dec.parameters())
+    params = (
+        list(eps_model.parameters())
+        + list(visit_enc.parameters())
+        + list(code_emb.parameters())
+        + list(visit_dec.parameters())
+    )
     optimizer = torch.optim.Adam(params, lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
 
     best_val = float("inf")
     best_state = {
         "eps": copy.deepcopy(eps_model.state_dict()),
+        "enc": copy.deepcopy(visit_enc.state_dict()),
         "code": copy.deepcopy(code_emb.state_dict()),
         "dec": copy.deepcopy(visit_dec.state_dict()),
     }
@@ -274,11 +280,13 @@ def train_model(
             best_val = val_loss
             best_state = {
                 "eps": copy.deepcopy(eps_model.state_dict()),
+                "enc": copy.deepcopy(visit_enc.state_dict()),
                 "code": copy.deepcopy(code_emb.state_dict()),
                 "dec": copy.deepcopy(visit_dec.state_dict()),
             }
 
     eps_model.load_state_dict(best_state["eps"])
+    visit_enc.load_state_dict(best_state["enc"])
     code_emb.load_state_dict(best_state["code"])
     visit_dec.load_state_dict(best_state["dec"])
     return train_losses, val_losses, best_val
