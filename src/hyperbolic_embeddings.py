@@ -111,20 +111,22 @@ class HyperbolicGraphVisitEncoder(nn.Module):
         code_embedding: HyperbolicCodeEmbedding (with .manifold and .emb)
         pad_idx: index of the padding code
     """
-    def __init__(self, code_embedding, pad_idx: int):
+    def __init__(self, code_embedding, pad_idx: int, scales=None):
         super().__init__()
         self.code_embedding = code_embedding
         self.manifold = code_embedding.manifold
         self.pad_idx = pad_idx
         self.dim = code_embedding.emb.size(-1)
+        self.scales = tuple(scales) if scales is not None else (0.5, 1.0, 2.0, 4.0)
+        self.output_dim = self.dim * len(self.scales)
 
     def forward(self, flat_visits: list):
         """
         flat_visits: list of 1D LongTensor of variable length (codes for each visit)
 
         Returns:
-            tangent: [B, dim] tangent-space visit representations
-                     (B = len(flat_visits))
+            tangent: [B, output_dim] tangent-space visit representations
+                     (B = len(flat_visits); output_dim = dim * len(scales))
         """
         device = self.code_embedding.emb.device
 
@@ -143,11 +145,18 @@ class HyperbolicGraphVisitEncoder(nn.Module):
         # Embed all codes: [B, V_max, dim] (in hyperbolic space)
         z = self.code_embedding(padded)
 
-        # Weighted Einstein midpoint along the visit dimension
-        midpoint = self.manifold.weighted_midpoint(z, weights=weights, reducedim=[1])
+        # Multi-scale weighted Einstein midpoints
+        tangents_multi = []
+        for scale in self.scales:
+            w_scaled = weights.pow(scale)
+            denom = w_scaled.sum(dim=1, keepdim=True)
+            denom[denom == 0] = 1.0
+            w_scaled = w_scaled / denom
+            midpoint = self.manifold.weighted_midpoint(z, weights=w_scaled, reducedim=[1])
+            tangents_multi.append(self.manifold.logmap0(midpoint))
 
-        # Map to tangent at origin: [B, dim]
-        tangent = self.manifold.logmap0(midpoint)
+        # Concatenate tangent representations from all scales
+        tangent = torch.cat(tangents_multi, dim=-1)
 
         # Explicitly zero-out empty visits
         is_empty = (mask.sum(dim=1, keepdim=True) == 0)
