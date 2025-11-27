@@ -47,7 +47,8 @@ LAMBDA_PAIR = 0.01
 NUM_SAMPLES_FOR_SYNTHETIC = 1000
 EXTRA_DEPTHS = [0, 5]
 
-LAMBDA_RECON_VALUES: List[float] = [500,1000,1500]
+LAMBDA_RECON_VALUES: List[float] = [2000,3000,4000]
+EARLY_STOP_PATIENCE = 5
 
 
 def collect_unique_params(*modules):
@@ -250,6 +251,7 @@ def train_model(
     }
 
     train_losses, val_losses = [], []
+    epochs_without_improvement = 0
     for epoch in range(1, n_epochs + 1):
         train_loss = run_epoch(
             train_loader,
@@ -296,6 +298,15 @@ def train_model(
                 "code": copy.deepcopy(code_emb.state_dict()),
                 "dec": copy.deepcopy(visit_dec.state_dict()),
             }
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+            if epochs_without_improvement >= EARLY_STOP_PATIENCE:
+                print(
+                    f"Stopping early at epoch {epoch} after {EARLY_STOP_PATIENCE} epochs "
+                    "without val improvement."
+                )
+                break
 
     eps_model.load_state_dict(best_state["eps"])
     visit_enc.load_state_dict(best_state["enc"])

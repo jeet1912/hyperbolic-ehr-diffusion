@@ -98,3 +98,59 @@ class HyperbolicVisitEncoder(nn.Module):
         tangent = torch.where(is_empty, torch.zeros_like(tangent), tangent)
         
         return tangent
+
+class HyperbolicGraphVisitEncoder(nn.Module):
+    """
+    Hyperbolic visit encoder that uses a hyperbolic code embedding and
+    aggregates per-visit codes via a weighted Einstein midpoint.
+
+    Graph structure is injected at the *embedding* level via HDD + code_pair
+    pretraining; this encoder then treats those embeddings as graph-aware.
+
+    Args:
+        code_embedding: HyperbolicCodeEmbedding (with .manifold and .emb)
+        pad_idx: index of the padding code
+    """
+    def __init__(self, code_embedding, pad_idx: int):
+        super().__init__()
+        self.code_embedding = code_embedding
+        self.manifold = code_embedding.manifold
+        self.pad_idx = pad_idx
+        self.dim = code_embedding.emb.size(-1)
+
+    def forward(self, flat_visits: list):
+        """
+        flat_visits: list of 1D LongTensor of variable length (codes for each visit)
+
+        Returns:
+            tangent: [B, dim] tangent-space visit representations
+                     (B = len(flat_visits))
+        """
+        device = self.code_embedding.emb.device
+
+        # [B, V_max]
+        padded = pad_sequence(
+            flat_visits, batch_first=True, padding_value=self.pad_idx
+        ).to(device)
+
+        # mask: [B, V_max], 1 for real codes, 0 for pad
+        mask = (padded != self.pad_idx).float()
+        mask_sum = mask.sum(dim=1, keepdim=True)
+        mask_sum[mask_sum == 0] = 1.0  # avoid division by zero
+
+        weights = mask / mask_sum
+
+        # Embed all codes: [B, V_max, dim] (in hyperbolic space)
+        z = self.code_embedding(padded)
+
+        # Weighted Einstein midpoint along the visit dimension
+        midpoint = self.manifold.weighted_midpoint(z, weights=weights, reducedim=[1])
+
+        # Map to tangent at origin: [B, dim]
+        tangent = self.manifold.logmap0(midpoint)
+
+        # Explicitly zero-out empty visits
+        is_empty = (mask.sum(dim=1, keepdim=True) == 0)
+        tangent = torch.where(is_empty, torch.zeros_like(tangent), tangent)
+
+        return tangent

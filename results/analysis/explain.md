@@ -111,28 +111,52 @@ This file constructs a controlled environment where I can debug the model's unde
 ### Baseline Context
 In `train_toy.py`, I trained a DDPM over visit vectors $x_0$ from mean-pooled embeddings. The decoding was heuristic (nearest neighbors).
 
+**Loss (`src/train_toy.py`, `compute_batch_loss`)**
+$$\mathcal{L}_{\text{toy}} = \mathbb{E}_{t,\epsilon}\!\left[\lVert \epsilon - \epsilon_\theta(x_t, t)\rVert_2^2\right] + \lambda_{\text{tree}}\mathcal{L}_{\text{pair}} + \lambda_{\text{radius}}\mathcal{L}_{\text{radius}}$$
+Here $\mathcal{L}_{\text{pair}}=\texttt{code\_pair\_loss}(\text{code\_emb}, \text{hier})$ keeps geodesic distances aligned with tree distances, while $\mathcal{L}_{\text{radius}}=\frac{1}{N}\sum_i(\lVert \mathbf{z}_i\rVert_2-d_i)^2$ penalizes deviation between each code vector's norm $\mathbf{z}_i$ and its depth target $d_i$.
+
 ### 1. Adding a Learnable Visit Decoder (`train_toyWithDecoder.py`)
 I inserted a parametric visit decoder (`VisitDecoder`) to reconstruct code sets with supervised loss.
--   **Loss**: $\mathcal{L} = \mathcal{L}_{\epsilon} + \mathcal{L}_{\text{pair}} + \mathcal{L}_{\text{radius}} + \lambda_{\text{recon}}\operatorname{BCE}(f_{\text{dec}}(x_0), y)$.
 -   **Result**: Euclidean worked okay (Recall@4 $\approx$ 0.14–0.24). Hyperbolic lagged because the decoder (Euclidean MLP) couldn't invert the curved space geometry.
+
+**Loss (`src/train_toyWithDecoder.py`, `compute_batch_loss`)**
+$$\mathcal{L}_{\text{dec}} = \mathcal{L}_{\epsilon} + \lambda_{\text{tree}}\mathcal{L}_{\text{pair}} + \lambda_{\text{radius}}\mathcal{L}_{\text{radius}} + \lambda_{\text{recon}}\mathcal{L}_{\text{BCE}}$$
+The new term $\mathcal{L}_{\text{BCE}}=\frac{1}{|M|C}\sum_{(b,l)\in M}\sum_{c=1}^{C}\operatorname{BCE}(\text{logits}_{blc}, y_{blc})$ averages multi-label BCE across the set $M$ of real visits (mask-true positions) and $C=|\mathcal{V}|$ codes, exactly as implemented when flattening logits/targets in `compute_batch_loss`.
 
 ### 2. Hyperbolic Forward Noise + Decoder (`train_toyWithDecHypNoise.py`)
 I made the forward noising process respect the manifold.
 -   **Mechanism**: Map $x_0$ and $\epsilon$ to the manifold, use Möbius addition: $x_t \approx \sqrt{\bar{\alpha}_t} \otimes x_0 \oplus \sqrt{1-\bar{\alpha}_t} \otimes \epsilon$.
 -   **Observation**: Tree-distance correlation hit near-perfect levels (0.99), but Recall@4 was terrible ($\approx$ 0.01). The geometry was perfect, but the model couldn't encode/decode semantic sets.
 
+**Loss (`src/train_toyWithDecHypNoise.py`, `compute_batch_loss`)**
+$$\mathcal{L}_{\text{hyp-dec}} = \mathcal{L}_{\epsilon}^{\mathbb{B}} + \lambda_{\text{tree}}\mathcal{L}_{\text{pair}} + \lambda_{\text{radius}}\mathcal{L}_{\text{radius}} + \lambda_{\text{recon}}\mathcal{L}_{\text{BCE}}$$
+The term $\mathcal{L}_{\epsilon}^{\mathbb{B}}$ follows the same MSE on predicted noise but the latent $x_t$ is produced with Möbius scalar multiplication/addition (`hyperbolic_forward_noise`, `hyperbolic_remove_noise`) before evaluating $\epsilon_\theta$.
+
 ### 3. Hyperbolic Diffusion Distance (HDD) (`train_toy_hdd.py`)
 Added a regularizer based on diffusion on the ICD graph.
 -   **Idea**: Embeddings should match graph diffusion distance: $d_{\text{emb}}(i,j) \approx \|\phi(i) - \phi(j)\|$.
 -   **Result**: Structure improved, recall didn't.
 
+**Loss (`src/train_toy_hdd.py`, `compute_batch_loss`)**
+$$\mathcal{L}_{\text{HDD}} = \mathcal{L}_{\epsilon}^{\mathbb{B}} + \lambda_{\text{tree}}\mathcal{L}_{\text{pair}} + \lambda_{\text{radius}}\mathcal{L}_{\text{radius}} + \lambda_{\text{hdd}}\mathcal{L}_{\text{diff}}^{\text{HDD}} + \lambda_{\text{recon}}\mathcal{L}_{\text{BCE}}$$
+Here $\mathcal{L}_{\text{diff}}^{\text{HDD}}=\texttt{hdd\_metric.embedding\_loss}(code\_emb)$ aligns pairwise Poincaré distances with diffusion distances from the ICD graph metric.
+
 ### 4. Hyperbolic Graph Diffusion (HGD) (`train_toy_hgd.py`)
 Aligned manifold distances with a graph diffusion kernel $K_t$.
 -   **Result**: Same story. Structure $\uparrow$, Utility $\leftrightarrow$.
 
+**Loss (`src/train_toy_hgd.py`, `compute_batch_loss`)**
+$$\mathcal{L}_{\text{HGD}} = \mathcal{L}_{\epsilon}^{\mathbb{B}} + \lambda_{\text{tree}}\mathcal{L}_{\text{pair}} + \lambda_{\text{radius}}\mathcal{L}_{\text{radius}} + \lambda_{\text{hgd}}\mathcal{L}_{\text{diff}}^{\text{HGD}} + \lambda_{\text{recon}}\mathcal{L}_{\text{BCE}}$$
+where $\mathcal{L}_{\text{diff}}^{\text{HGD}}=\texttt{hgd\_metric.diffusion\_loss}(code\_emb)$ penalizes deviations from the heat-kernel similarities computed on the ICD graph.
+
 ### 5. Combined HDD + HGD (`train_toy_hdd_hgd.py`)
 Stacked all regularizers.
 -   **Result**: Geometry became rigid. Deep hierarchy recall sat near zero.
+
+**Loss (`src/train_toy_hdd_hgd.py`, `compute_batch_loss`)**
+$$
+\mathcal{L}_{\text{HDD+HGD}} = \mathcal{L}_{\epsilon}^{\mathbb{B}} + \lambda_{\text{tree}}\mathcal{L}_{\text{pair}} + \lambda_{\text{radius}}\mathcal{L}_{\text{radius}} + \lambda_{\text{hdd}}\mathcal{L}_{\text{diff}}^{\text{HDD}} + \lambda_{\text{hgd}}\mathcal{L}_{\text{diff}}^{\text{HGD}} + \lambda_{\text{recon}}\mathcal{L}_{\text{BCE}}$$
+Both diffusion penalties are accumulated exactly as implemented in `src/train_toy_hdd_hgd.py`, keeping manifold geometry tethered to graph diffusion while still supervising reconstruction.
 
 ---
 
@@ -167,7 +191,13 @@ $$ x_{t+\Delta t} = x_t + v_\theta(x_t, t) \cdot \Delta t $$
 *Hyperbolic Constraint*: After each step in tangent space, we project to the manifold (`expmap0`) and back (`logmap0`) to strictly enforce the curvature constraints.
 
 #### 4. Total Objective
-$$ \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{flow}} + \lambda_{\text{recon}} \cdot \mathcal{L}_{\text{focal}} $$
+$$
+\mathcal{L}_{\text{total}}
+= \mathcal{L}_{\text{flow}}
++ \lambda_{\text{recon}}\mathcal{L}_{\text{focal}}
++ \lambda_{\text{pair}}\mathcal{L}_{\text{pair}},
+$$
+mirroring the call to `compute_batch_loss` in `src/train_rectified_flow.py` where `\mathcal{L}_{\text{focal}}=\texttt{focal\_loss}(f_{\text{dec}}(x), y)` and $\mathcal{L}_{\text{pair}}$ reuses the DDPM code-pair penalty inside the rectified-flow loop.
 
 This architecture combining the stability of Rectified Flow with the geometry-aware Einstein Encoder and Distance Decoder finally bridges the gap, allowing the hyperbolic model to capture both the hierarchy and the discrete set structure of the visits.
 
