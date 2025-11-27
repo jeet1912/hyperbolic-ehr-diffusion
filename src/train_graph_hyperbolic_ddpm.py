@@ -18,7 +18,7 @@ from hyperbolic_noise import hyperbolic_forward_noise, hyperbolic_remove_noise
 from losses import code_pair_loss
 from metrics_toy import traj_stats
 from traj_models import TrajectoryEpsModel
-from regularizers import radius_regularizer
+from regularizers import radius_regularizer, HyperbolicDiffusionDistance
 
 
 BATCH_SIZE = 128
@@ -29,15 +29,16 @@ EPS_LAYERS = 6
 EPS_HEADS = 8
 EPS_FF_DIM = 1024
 TRAIN_LR = 3e-4
-TRAIN_EPOCHS = 30
-PRETRAIN_EPOCHS = 15
+TRAIN_EPOCHS = 50
+PRETRAIN_EPOCHS = 30
 NUM_SAMPLES_FOR_SYNTHETIC = 1000
-EARLY_STOP_PATIENCE = 5
+EARLY_STOP_PATIENCE = 3
 EXTRA_DEPTHS = [0, 5]
 
-LAMBDA_RADIUS = 1.0
+LAMBDA_RADIUS = 0.003
 LAMBDA_PAIR = 0.01
-LAMBDA_RECON_VALUES = [1, 10, 100, 1000]
+LAMBDA_HDD = 0.02
+LAMBDA_RECON_VALUES = [1, 10, 100, 1000, 2000]
 
 # ---- utils copied/adapted from your DDPM script ----
 
@@ -307,10 +308,20 @@ def train_model(
     plt.plot(epochs, val_losses, label="val")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
-    plt.title(tag)
+    plt.title(
+        f"graph ddpm | depth={tag['depth']} | lambda_recon={tag['lambda_recon']} | "
+        f"lambda_radius={tag['lambda_radius']} | lambda_pair={tag['lambda_pair']} | "
+        f"lambda_hdd={tag['lambda_hdd']} | lr={lr} | epochs={n_epochs} | "
+        f"patience={EARLY_STOP_PATIENCE} | batch={BATCH_SIZE}"
+    )
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(plot_dir, f"{tag}_loss.png"))
+    fname = (
+        f"graph_ddpm_depth{tag['depth']}_lrecon{int(tag['lambda_recon'])}_"
+        f"lrad{tag['lambda_radius']}_lpair{tag['lambda_pair']}_lhdd{tag['lambda_hdd']}_"
+        f"lr{str(lr).replace('.', 'p')}_ep{n_epochs}.png"
+    )
+    plt.savefig(os.path.join(plot_dir, fname))
     plt.close()
 
     return train_losses, val_losses, best_val
@@ -487,8 +498,8 @@ def pretrain_embeddings(
     pad_idx,
     lambda_radius=LAMBDA_RADIUS,
     lambda_pair=LAMBDA_PAIR,
+    lambda_hdd=LAMBDA_HDD,
     n_epochs=PRETRAIN_EPOCHS,
-    plot_dir="results/plots",
 ):
     print("\n=== Pretraining hyperbolic graph embeddings (DDPM) ===")
     code_emb = HyperbolicCodeEmbedding(num_codes=len(hier.codes) + 1, dim=dim).to(device)
@@ -497,7 +508,8 @@ def pretrain_embeddings(
     params = collect_unique_params(visit_enc)
     optimizer = torch.optim.Adam(params, lr=1e-3, weight_decay=1e-5)
 
-    train_losses, val_losses = [], []
+    hdd_metric = HyperbolicDiffusionDistance(hier, device=device)
+
     best_val = float("inf")
     best_state = None
 
@@ -506,7 +518,8 @@ def pretrain_embeddings(
         visit_enc.train()
         loss_rad = radius_regularizer(code_emb)
         loss_pair = code_pair_loss(code_emb, hier, device=device, num_pairs=1024)
-        loss = lambda_radius * loss_rad + lambda_pair * loss_pair
+        hdd_loss = hdd_metric.embedding_loss(code_emb, device=device, num_pairs=1024)
+        loss = lambda_radius * loss_rad + lambda_pair * loss_pair + lambda_hdd * hdd_loss
 
         optimizer.zero_grad()
         loss.backward()
@@ -517,14 +530,13 @@ def pretrain_embeddings(
             visit_enc.eval()
             val_rad = radius_regularizer(code_emb)
             val_pair = code_pair_loss(code_emb, hier, device=device, num_pairs=1024)
-            val_loss = lambda_radius * val_rad + lambda_pair * val_pair
+            val_hdd = hdd_metric.embedding_loss(code_emb, device=device, num_pairs=1024)
+            val_loss = lambda_radius * val_rad + lambda_pair * val_pair + lambda_hdd * val_hdd
 
-        train_losses.append(loss.item())
-        val_losses.append(val_loss.item())
         print(
             f"[Pretrain-DDPM] Epoch {epoch:3d} | "
             f"train={loss.item():.6f} | val={val_loss.item():.6f} | "
-            f"rad={lambda_radius} pair={lambda_pair}"
+            f"rad={lambda_radius} pair={lambda_pair} hdd={lambda_hdd}"
         )
 
         if val_loss.item() < best_val:
@@ -534,20 +546,6 @@ def pretrain_embeddings(
                 "visit_enc": copy.deepcopy(visit_enc.state_dict()),
             }
 
-    tag = f"pretrain_ddpm_rad{lambda_radius}_pair{lambda_pair}"
-    os.makedirs(plot_dir, exist_ok=True)
-    epochs = range(1, len(train_losses) + 1)
-    plt.figure(figsize=(8, 5))
-    plt.plot(epochs, train_losses, label="train")
-    plt.plot(epochs, val_losses, label="val")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title(tag)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(os.path.join(plot_dir, f"{tag}_loss.png"))
-    plt.close()
-
     if best_state is not None:
         code_emb.load_state_dict(best_state["code_emb"])
         visit_enc.load_state_dict(best_state["visit_enc"])
@@ -556,7 +554,7 @@ def pretrain_embeddings(
     os.makedirs(ckpt_dir, exist_ok=True)
     ckpt_path = os.path.join(
         ckpt_dir,
-        f"hyperbolic_ddpm_pretrain_rad{lambda_radius}_pair{lambda_pair}_val{best_val:.4f}.pt",
+        f"hyperbolic_ddpm_pretrain_rad{lambda_radius}_pair{lambda_pair}_hdd{lambda_hdd}_val{best_val:.4f}.pt",
     )
     torch.save(
         {
@@ -565,6 +563,7 @@ def pretrain_embeddings(
             "extra_depth": hier.extra_depth,
             "lambda_radius": lambda_radius,
             "lambda_pair": lambda_pair,
+            "lambda_hdd": lambda_hdd,
             "best_val": best_val,
         },
         ckpt_path,
@@ -614,6 +613,7 @@ def main():
             pad_idx,
             lambda_radius=LAMBDA_RADIUS,
             lambda_pair=LAMBDA_PAIR,
+            lambda_hdd=LAMBDA_HDD,
             n_epochs=PRETRAIN_EPOCHS,
         )
         pretrained_code = copy.deepcopy(code_emb.state_dict())
@@ -656,7 +656,13 @@ def main():
             ).to(device)
 
             plot_dir = os.path.join("results", "plots")
-            tag = f"{name}_lrecon{int(lambda_recon)}"
+            tag = {
+                "depth": hier.max_depth,
+                "lambda_recon": lambda_recon,
+                "lambda_radius": LAMBDA_RADIUS,
+                "lambda_pair": LAMBDA_PAIR,
+                "lambda_hdd": LAMBDA_HDD,
+            }
             train_losses, val_losses, best_val = train_model(
                 eps_model,
                 visit_enc,

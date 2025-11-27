@@ -17,22 +17,24 @@ from traj_models import TrajectoryVelocityModel
 from losses import code_pair_loss, focal_loss
 from metrics_toy import traj_stats
 from hyperbolic_embeddings import HyperbolicCodeEmbedding, HyperbolicGraphVisitEncoder
-from regularizers import radius_regularizer
+from regularizers import radius_regularizer, HyperbolicDiffusionDistance
 
 
 BATCH_SIZE = 128
 EMBED_DIM = 32
 MAX_LEN = 6
-TRAIN_EPOCHS = 30
-PRETRAIN_EPOCHS = 15
-EARLY_STOP_PATIENCE = 5
+TRAIN_EPOCHS = 50
+PRETRAIN_EPOCHS = 30
+EARLY_STOP_PATIENCE = 3
 TRAIN_LR = 3e-4
 NUM_SAMPLES_FOR_SYNTHETIC = 1000
 EXTRA_DEPTHS = [0, 5]
 
-LAMBDA_RECON_RECTIFIED = 2000.0
-LAMBDA_RADIUS = 1.0
+LAMBDA_RECON_VALUES = [1, 10, 100, 1000, 2000]
+DEFAULT_LAMBDA_RECON = LAMBDA_RECON_VALUES[-1]
+LAMBDA_RADIUS = 0.003
 LAMBDA_PAIR = 0.01
+LAMBDA_HDD = 0.02
 
 def collect_unique_params(*modules):
     unique = []
@@ -49,7 +51,7 @@ def collect_unique_params(*modules):
                 unique.append(p)
     return unique
 
-def save_loss_curves(train_losses, val_losses, out_dir, tag):
+def save_loss_curves(train_losses, val_losses, out_dir, meta):
     os.makedirs(out_dir, exist_ok=True)
     epochs = range(1, len(train_losses) + 1)
     plt.figure(figsize=(8, 5))
@@ -58,10 +60,23 @@ def save_loss_curves(train_losses, val_losses, out_dir, tag):
         plt.plot(epochs, val_losses, label="val")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
-    plt.title(tag)
+    plt.title(
+        "graph rectified1 | "
+        f"depth={meta['depth']} | lambda_recon={meta['lambda_recon']} | "
+        f"lambda_radius={meta['lambda_radius']} | lambda_pair={meta['lambda_pair']} | "
+        f"lambda_hdd={meta['lambda_hdd']} | lr={meta['lr']} | "
+        f"epochs={meta['epochs']} | patience={EARLY_STOP_PATIENCE} | "
+        f"batch={BATCH_SIZE}"
+    )
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, f"{tag}_loss.png"))
+    fname = (
+        f"graph_rectified1_depth{meta['depth']}_lrecon{int(meta['lambda_recon'])}_"
+        f"lrad{meta['lambda_radius']}_lpair{meta['lambda_pair']}_"
+        f"lhdd{meta['lambda_hdd']}_lr{str(meta['lr']).replace('.', 'p')}_"
+        f"ep{meta['epochs']}.png"
+    )
+    plt.savefig(os.path.join(out_dir, fname))
     plt.close()
 
 def split_trajectories(trajs, train_ratio=0.8, val_ratio=0.1, seed=42):
@@ -111,17 +126,18 @@ def pretrain_embeddings(
     pad_idx,
     lambda_radius=LAMBDA_RADIUS,
     lambda_pair=LAMBDA_PAIR,
+    lambda_hdd=LAMBDA_HDD,
     n_epochs=PRETRAIN_EPOCHS,
-    plot_dir="results/plots",
 ):
     print("\n=== Pretraining hyperbolic graph embeddings (Rectified) ===")
     code_emb = HyperbolicCodeEmbedding(num_codes=len(hier.codes) + 1, dim=dim, c=1.0).to(device)
     visit_enc = HyperbolicGraphVisitEncoder(code_emb, pad_idx=pad_idx).to(device)
 
-    params = list(code_emb.parameters()) + list(visit_enc.parameters())
+    params = collect_unique_params(code_emb, visit_enc)
     optimizer = torch.optim.Adam(params, lr=1e-3, weight_decay=1e-5)
 
-    train_losses, val_losses = [], []
+    hdd_metric = HyperbolicDiffusionDistance(hier, device=device)
+
     best_val = float("inf")
     best_state = None
 
@@ -131,7 +147,8 @@ def pretrain_embeddings(
 
         loss_rad = radius_regularizer(code_emb)
         loss_pair = code_pair_loss(code_emb, hier, device=device, num_pairs=1024)
-        loss = lambda_radius * loss_rad + lambda_pair * loss_pair
+        loss_hdd = hdd_metric.embedding_loss(code_emb, device=device, num_pairs=1024)
+        loss = lambda_radius * loss_rad + lambda_pair * loss_pair + lambda_hdd * loss_hdd
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -141,15 +158,13 @@ def pretrain_embeddings(
             visit_enc.eval()
             val_rad = radius_regularizer(code_emb)
             val_pair = code_pair_loss(code_emb, hier, device=device, num_pairs=1024)
-            val_loss = lambda_radius * val_rad + lambda_pair * val_pair
-
-        train_losses.append(loss.item())
-        val_losses.append(val_loss.item())
+            val_hdd = hdd_metric.embedding_loss(code_emb, device=device, num_pairs=1024)
+            val_loss = lambda_radius * val_rad + lambda_pair * val_pair + lambda_hdd * val_hdd
 
         print(
             f"[Pretrain] Epoch {epoch:3d} | "
             f"train={loss.item():.6f} | val={val_loss.item():.6f} | "
-            f"rad={lambda_radius} pair={lambda_pair}"
+            f"rad={lambda_radius} pair={lambda_pair} hdd={lambda_hdd}"
         )
 
         if val_loss.item() < best_val:
@@ -158,9 +173,6 @@ def pretrain_embeddings(
                 "code_emb": copy.deepcopy(code_emb.state_dict()),
                 "visit_enc": copy.deepcopy(visit_enc.state_dict()),
             }
-
-    tag = f"pretrain_rectified_rad{lambda_radius}_pair{lambda_pair}"
-    save_loss_curves(train_losses, val_losses, plot_dir, tag)
 
     if best_state is not None:
         code_emb.load_state_dict(best_state["code_emb"])
@@ -179,6 +191,7 @@ def pretrain_embeddings(
             "extra_depth": hier.extra_depth,
             "lambda_radius": lambda_radius,
             "lambda_pair": lambda_pair,
+            "lambda_hdd": lambda_hdd,
             "best_val": best_val,
         },
         ckpt_path,
@@ -197,7 +210,7 @@ def compute_batch_loss(
     tangent_proj,
     code_emb,
     hier,
-    lambda_recon=LAMBDA_RECON_RECTIFIED,
+    lambda_recon=DEFAULT_LAMBDA_RECON,
 ):
     latents = visit_enc(flat_visits).contiguous()
     dim = latents.shape[-1]
@@ -228,6 +241,7 @@ def run_epoch(
     velocity_model,
     visit_enc,
     visit_dec,
+    tangent_proj,
     code_emb,
     hier,
     device,
@@ -235,7 +249,7 @@ def run_epoch(
     optimizer=None,
 ):
     is_training = optimizer is not None
-    modules = [velocity_model, visit_enc, visit_dec]
+    modules = [velocity_model, visit_enc, visit_dec, tangent_proj]
     for m in modules:
         m.train() if is_training else m.eval()
 
@@ -257,6 +271,7 @@ def run_epoch(
                 velocity_model,
                 visit_enc,
                 visit_dec,
+                tangent_proj,
                 code_emb,
                 hier,
                 lambda_recon=lambda_recon,
@@ -278,18 +293,19 @@ def train_rectified(
     code_emb,
     visit_enc,
     visit_dec,
+    tangent_proj,
     train_loader,
     val_loader,
     hier,
     device,
-    lambda_recon=2000.0,
-    n_epochs=50,
+    lambda_recon=DEFAULT_LAMBDA_RECON,
+    n_epochs=TRAIN_EPOCHS,
     plot_dir="results/plots",
-    tag="rectified_graph",
+    meta=None,
 ):
     optimizer = torch.optim.AdamW(
-        collect_unique_params(velocity_model, visit_enc, visit_dec),
-        lr=3e-4,
+        collect_unique_params(velocity_model, visit_enc, visit_dec, tangent_proj),
+        lr=TRAIN_LR,
         weight_decay=1e-5,
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs)
@@ -297,7 +313,6 @@ def train_rectified(
     best_val = float("inf")
     best_state = None
     train_losses, val_losses = [], []
-    patience = 5
     epochs_no_improve = 0
 
     for epoch in range(1, n_epochs + 1):
@@ -306,6 +321,7 @@ def train_rectified(
             velocity_model,
             visit_enc,
             visit_dec,
+            tangent_proj,
             code_emb,
             hier,
             device,
@@ -317,6 +333,7 @@ def train_rectified(
             velocity_model,
             visit_enc,
             visit_dec,
+            tangent_proj,
             code_emb,
             hier,
             device,
@@ -340,22 +357,24 @@ def train_rectified(
                 "decoder": copy.deepcopy(visit_dec.state_dict()),
                 "code_emb": copy.deepcopy(code_emb.state_dict()),
                 "visit_enc": copy.deepcopy(visit_enc.state_dict()),
+                "tangent_proj": copy.deepcopy(tangent_proj.state_dict()),
             }
             epochs_no_improve = 0
         else:
             epochs_no_improve += 1
-            if epochs_no_improve >= patience:
+            if epochs_no_improve >= EARLY_STOP_PATIENCE:
                 print("[Rectified] Early stopping.")
                 break
 
-    tag_full = f"{tag}_lrecon{int(lambda_recon)}"
-    save_loss_curves(train_losses, val_losses, plot_dir, tag_full)
+    meta = meta or {}
+    save_loss_curves(train_losses, val_losses, plot_dir, meta)
 
     if best_state is not None:
         velocity_model.load_state_dict(best_state["velocity"])
         visit_dec.load_state_dict(best_state["decoder"])
         code_emb.load_state_dict(best_state["code_emb"])
         visit_enc.load_state_dict(best_state["visit_enc"])
+        tangent_proj.load_state_dict(best_state["tangent_proj"])
 
     return best_val
 
@@ -363,6 +382,7 @@ def evaluate_recall(
     loader,
     visit_enc,
     visit_dec,
+    tangent_proj,
     hier,
     device,
     codes_per_visit=4,
@@ -378,7 +398,7 @@ def evaluate_recall(
             flat_visits = [v.to(device) for v in flat_visits]
             visit_mask = visit_mask.to(device)
             latents = visit_enc(flat_visits).contiguous().view(B, L, -1)
-            logits = visit_dec(latents.view(B * L, -1))
+            logits = visit_dec(tangent_proj(latents.view(B * L, -1)))
             preds = logits.topk(k=codes_per_visit, dim=-1).indices.view(B * L, codes_per_visit)
             mask_flat = visit_mask.view(-1)
             for visit_tensor, mask_value, pred_codes in zip(flat_visits, mask_flat, preds):
@@ -430,6 +450,7 @@ def sample_trajectories(
     velocity_model,
     visit_enc,
     visit_dec,
+    tangent_proj,
     hier,
     max_len,
     dim,
@@ -450,7 +471,7 @@ def sample_trajectories(
             t = torch.full((num_samples,), step * dt, device=device)
             v = velocity_model(x_t, t, visit_mask)
             x_t = x_t + v * dt
-        logits = visit_dec(x_t.view(num_samples * max_len, dim))
+        logits = visit_dec(tangent_proj(x_t.view(num_samples * max_len, dim)))
         decoded_idx = logits.topk(k=codes_per_visit, dim=-1).indices.view(
             num_samples, max_len, codes_per_visit
         )
@@ -474,16 +495,6 @@ def sample_trajectories(
     return synthetic_trajs
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--depths", type=int, nargs="+", default=[0, 5])
-    parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--pretrain_epochs", type=int, default=50)
-    parser.add_argument("--lambda_recon", type=float, default=2000.0)
-    parser.add_argument("--lambda_radius", type=float, default=1.0)
-    parser.add_argument("--lambda_pair", type=float, default=0.01)
-    parser.add_argument("--lambda_hdd", type=float, default=1.0)
-    args = parser.parse_args()
-
     device = torch.device(
         "cuda"
         if torch.cuda.is_available()
@@ -498,11 +509,7 @@ def main():
     np.random.seed(42)
     random.seed(42)
 
-    dim = 32
-    max_len = 6
-    batch_size = 128
-
-    for extra_depth in args.depths:
+    for extra_depth in EXTRA_DEPTHS:
         hier = ToyICDHierarchy(extra_depth=extra_depth)
         name = f"rectified_depth{hier.max_depth}"
 
@@ -512,113 +519,132 @@ def main():
         print(f"\n{name} | max_depth = {hier.max_depth} | Real stats: {real_stats}")
 
         pad_idx = len(hier.codes)
-        # ---- Stage 0: pretrain embeddings ----
-        code_emb, visit_enc, ckpt_path, best_pre_val = pretrain_embeddings(
+        code_emb, visit_enc, _, best_pre_val = pretrain_embeddings(
             hier,
             device,
-            dim,
+            EMBED_DIM,
             pad_idx,
-            lambda_radius=args.lambda_radius,
-            lambda_pair=args.lambda_pair,
-            lambda_hdd=args.lambda_hdd,
-            n_epochs=args.pretrain_epochs,
+            lambda_radius=LAMBDA_RADIUS,
+            lambda_pair=LAMBDA_PAIR,
+            lambda_hdd=LAMBDA_HDD,
+            n_epochs=PRETRAIN_EPOCHS,
         )
 
-        # freeze code embeddings for downstream / generative training
-        for p in code_emb.parameters():
-            p.requires_grad = False
+        pretrained_code = copy.deepcopy(code_emb.state_dict())
+        pretrained_enc = copy.deepcopy(visit_enc.state_dict())
 
-        # ---- Build loaders ----
-        collate = VisitCollator(pad_idx)
+        collate = make_collate_fn(pad_idx)
         train_dl = DataLoader(
-            TrajDataset(train_trajs, max_len, pad_idx),
-            batch_size=batch_size,
+            TrajDataset(train_trajs, MAX_LEN, pad_idx),
+            batch_size=BATCH_SIZE,
             shuffle=True,
             collate_fn=collate,
         )
         val_dl = DataLoader(
-            TrajDataset(val_trajs, max_len, pad_idx),
-            batch_size=batch_size,
+            TrajDataset(val_trajs, MAX_LEN, pad_idx),
+            batch_size=BATCH_SIZE,
             shuffle=False,
             collate_fn=collate,
         )
         test_dl = DataLoader(
-            TrajDataset(test_trajs, max_len, pad_idx),
-            batch_size=batch_size,
+            TrajDataset(test_trajs, MAX_LEN, pad_idx),
+            batch_size=BATCH_SIZE,
             shuffle=False,
             collate_fn=collate,
         )
 
-        # ---- Decoder & velocity model ----
         freq = compute_code_frequency(train_trajs, len(hier.codes), device)
-        visit_dec = HyperbolicDistanceDecoder(
-            code_embedding=code_emb.emb,
-            manifold=code_emb.manifold,
-            code_freq=freq,
-        ).to(device)
 
-        velocity_model = TrajectoryVelocityModel(
-            dim=dim, n_layers=6, n_heads=8, ff_dim=1024
-        ).to(device)
+        for lambda_recon in LAMBDA_RECON_VALUES:
+            code_emb.load_state_dict(pretrained_code)
+            visit_enc.load_state_dict(pretrained_enc)
+            for p in code_emb.parameters():
+                p.requires_grad = False
 
-        # ---- Stage 1: rectified flow training ----
-        best_val = train_rectified(
-            velocity_model,
-            code_emb,
-            visit_enc,
-            visit_dec,
-            train_dl,
-            val_dl,
-            hier,
-            device,
-            lambda_recon=args.lambda_recon,
-            n_epochs=args.epochs,
-            tag=f"{name}_graph",
-        )
-        print(
-            f"[Summary Rectified] depth={hier.max_depth} | "
-            f"pretrain_val={best_pre_val:.6f} | best_val={best_val:.6f}"
-        )
+            latent_dim = visit_enc.output_dim
+            tangent_proj = nn.Linear(latent_dim, EMBED_DIM).to(device)
+            visit_dec = HyperbolicDistanceDecoder(
+                code_embedding=code_emb.emb,
+                manifold=code_emb.manifold,
+                code_freq=freq,
+            ).to(device)
+            velocity_model = TrajectoryVelocityModel(
+                dim=latent_dim, n_layers=6, n_heads=8, ff_dim=1024
+            ).to(device)
 
-        # ---- Eval on test ----
-        test_recall = evaluate_recall(test_dl, visit_enc, visit_dec, hier, device)
-        corr = correlation_tree_vs_embedding(code_emb, hier, device=device)
-        print(f"Test Recall@4: {test_recall:.4f}")
-        print(f"Tree-Embedding Correlation: {corr:.4f}")
-
-        synthetic = sample_trajectories(
-            velocity_model,
-            visit_enc,
-            visit_dec,
-            hier,
-            max_len,
-            dim,
-            num_samples=1000,
-            device=device,
-        )
-        stats = traj_stats(synthetic, hier)
-        print(f"Synthetic stats (N={len(synthetic)}): {stats}")
-
-        ckpt_dir = "results/checkpoints"
-        os.makedirs(ckpt_dir, exist_ok=True)
-        model_ckpt = os.path.join(
-            ckpt_dir,
-            f"hyperbolic_rectified_lrecon{int(args.lambda_recon)}_depth{hier.max_depth}_best{best_val:.4f}.pt",
-        )
-        torch.save(
-            {
-                "velocity_model": velocity_model.state_dict(),
-                "visit_dec": visit_dec.state_dict(),
-                "visit_enc": visit_enc.state_dict(),
-                "code_emb": code_emb.state_dict(),
-                "lambda_recon": args.lambda_recon,
+            meta = {
                 "depth": hier.max_depth,
-                "test_recall": test_recall,
-                "tree_corr": corr,
-            },
-            model_ckpt,
-        )
-        print(f"Saved rectified model checkpoint to {model_ckpt}")
+                "lambda_recon": lambda_recon,
+                "lambda_radius": LAMBDA_RADIUS,
+                "lambda_pair": LAMBDA_PAIR,
+                "lambda_hdd": LAMBDA_HDD,
+                "lr": TRAIN_LR,
+                "epochs": TRAIN_EPOCHS,
+            }
+
+            best_val = train_rectified(
+                velocity_model,
+                code_emb,
+                visit_enc,
+                visit_dec,
+                tangent_proj,
+                train_dl,
+                val_dl,
+                hier,
+                device,
+                lambda_recon=lambda_recon,
+                n_epochs=TRAIN_EPOCHS,
+                plot_dir=os.path.join("results", "plots"),
+                meta=meta,
+            )
+            print(
+                f"[Summary Rectified] depth={hier.max_depth} | lambda_recon={lambda_recon} | "
+                f"pretrain_val={best_pre_val:.6f} | best_val={best_val:.6f}"
+            )
+
+            test_recall = evaluate_recall(test_dl, visit_enc, visit_dec, tangent_proj, hier, device)
+            corr = correlation_tree_vs_embedding(code_emb, hier, device=device)
+            print(f"Test Recall@4: {test_recall:.4f}")
+            print(f"Tree-Embedding Correlation: {corr:.4f}")
+
+            synthetic = sample_trajectories(
+                velocity_model,
+                visit_enc,
+                visit_dec,
+                tangent_proj,
+                hier,
+                MAX_LEN,
+                latent_dim,
+                num_samples=NUM_SAMPLES_FOR_SYNTHETIC,
+                device=device,
+            )
+            stats = traj_stats(synthetic, hier)
+            print(f"Synthetic stats (N={len(synthetic)}): {stats}")
+
+            ckpt_dir = "results/checkpoints"
+            os.makedirs(ckpt_dir, exist_ok=True)
+            model_ckpt = os.path.join(
+                ckpt_dir,
+                f"graph_rectified1_depth{hier.max_depth}_lrecon{int(lambda_recon)}_best{best_val:.4f}.pt",
+            )
+            torch.save(
+                {
+                    "velocity_model": velocity_model.state_dict(),
+                    "visit_dec": visit_dec.state_dict(),
+                    "visit_enc": visit_enc.state_dict(),
+                    "tangent_proj": tangent_proj.state_dict(),
+                    "code_emb": code_emb.state_dict(),
+                    "lambda_recon": lambda_recon,
+                    "lambda_radius": LAMBDA_RADIUS,
+                    "lambda_pair": LAMBDA_PAIR,
+                    "lambda_hdd": LAMBDA_HDD,
+                    "depth": hier.max_depth,
+                    "test_recall": test_recall,
+                    "tree_corr": corr,
+                },
+                model_ckpt,
+            )
+            print(f"Saved rectified model checkpoint to {model_ckpt}")
 
 
 if __name__ == "__main__":
