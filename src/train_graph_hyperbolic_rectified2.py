@@ -30,7 +30,8 @@ TRAIN_LR = 3e-4
 NUM_SAMPLES_FOR_SYNTHETIC = 1000
 EXTRA_DEPTHS = [0, 5]
 
-LAMBDA_RECON_RECTIFIED = 2000.0
+LAMBDA_RECON_VALUES = [1, 10, 100, 1000, 2000]
+DEFAULT_LAMBDA_RECON = LAMBDA_RECON_VALUES[-1]
 LAMBDA_RADIUS = 1.0
 LAMBDA_PAIR = 0.01
 
@@ -225,7 +226,7 @@ def compute_batch_loss(
     tangent_proj,
     code_emb,
     hier,
-    lambda_recon=LAMBDA_RECON_RECTIFIED,
+    lambda_recon=DEFAULT_LAMBDA_RECON,
 ):
     latents = visit_enc(flat_visits).contiguous()
     dim = latents.shape[-1]
@@ -314,7 +315,7 @@ def train_rectified(
     val_loader,
     hier,
     device,
-    lambda_recon=LAMBDA_RECON_RECTIFIED,
+    lambda_recon=DEFAULT_LAMBDA_RECON,
     n_epochs=TRAIN_EPOCHS,
     plot_dir="results/plots",
     tag="rectified_graph",
@@ -578,81 +579,94 @@ def main():
         )
 
         latent_dim = visit_enc.output_dim
-        tangent_proj = nn.Linear(latent_dim, EMBED_DIM).to(device)
-
-        # ---- Decoder & velocity model ----
+        pretrained_code = copy.deepcopy(code_emb.state_dict())
+        pretrained_enc = copy.deepcopy(visit_enc.state_dict())
         freq = compute_code_frequency(train_trajs, len(hier.codes), device)
-        visit_dec = HyperbolicDistanceDecoder(
-            code_embedding=code_emb.emb,
-            manifold=code_emb.manifold,
-            code_freq=freq,
-        ).to(device)
+        depth_results = []
 
-        velocity_model = TrajectoryVelocityModel(
-            dim=latent_dim, n_layers=6, n_heads=8, ff_dim=1024
-        ).to(device)
+        for lambda_recon in LAMBDA_RECON_VALUES:
+            # reset modules to pretrained states
+            code_emb.load_state_dict(pretrained_code)
+            visit_enc.load_state_dict(pretrained_enc)
+            for p in code_emb.parameters():
+                p.requires_grad = False
 
-        # ---- Stage 1: rectified flow training ----
-        best_val = train_rectified(
-            velocity_model,
-            code_emb,
-            visit_enc,
-            visit_dec,
-            tangent_proj,
-            train_dl,
-            val_dl,
-            hier,
-            device,
-            lambda_recon=LAMBDA_RECON_RECTIFIED,
-            n_epochs=TRAIN_EPOCHS,
-            tag=f"{name}_graph",
-        )
-        print(
-            f"[Summary Rectified] depth={hier.max_depth} | "
-            f"pretrain_val={best_pre_val:.6f} | best_val={best_val:.6f}"
-        )
+            tangent_proj = nn.Linear(latent_dim, EMBED_DIM).to(device)
+            visit_dec = HyperbolicDistanceDecoder(
+                code_embedding=code_emb.emb,
+                manifold=code_emb.manifold,
+                code_freq=freq,
+            ).to(device)
+            velocity_model = TrajectoryVelocityModel(
+                dim=latent_dim, n_layers=6, n_heads=8, ff_dim=1024
+            ).to(device)
 
-        # ---- Eval on test ----
-        test_recall = evaluate_recall(test_dl, visit_enc, visit_dec, tangent_proj, hier, device)
-        corr = correlation_tree_vs_embedding(code_emb, hier, device=device)
-        print(f"Test Recall@4: {test_recall:.4f}")
-        print(f"Tree-Embedding Correlation: {corr:.4f}")
+            best_val = train_rectified(
+                velocity_model,
+                code_emb,
+                visit_enc,
+                visit_dec,
+                tangent_proj,
+                train_dl,
+                val_dl,
+                hier,
+                device,
+                lambda_recon=lambda_recon,
+                n_epochs=TRAIN_EPOCHS,
+                tag=f"{name}_graph",
+            )
+            print(
+                f"[Summary Rectified2] depth={hier.max_depth} | "
+                f"lambda_recon={lambda_recon} | pretrain_val={best_pre_val:.6f} | best_val={best_val:.6f}"
+            )
 
-        synthetic = sample_trajectories(
-            velocity_model,
-            visit_enc,
-            visit_dec,
-            tangent_proj,
-            hier,
-            MAX_LEN,
-            latent_dim,
-            num_samples=NUM_SAMPLES_FOR_SYNTHETIC,
-            device=device,
-        )
-        stats = traj_stats(synthetic, hier)
-        print(f"Synthetic stats (N={len(synthetic)}): {stats}")
+            test_recall = evaluate_recall(test_dl, visit_enc, visit_dec, tangent_proj, hier, device)
+            corr = correlation_tree_vs_embedding(code_emb, hier, device=device)
+            print(f"Test Recall@4: {test_recall:.4f}")
+            print(f"Tree-Embedding Correlation: {corr:.4f}")
 
-        ckpt_dir = "results/checkpoints"
-        os.makedirs(ckpt_dir, exist_ok=True)
-        model_ckpt = os.path.join(
-            ckpt_dir,
-            f"hyperbolic_rectified_lrecon{int(LAMBDA_RECON_RECTIFIED)}_depth{hier.max_depth}_best{best_val:.4f}.pt",
-        )
-        torch.save(
-            {
-                "velocity_model": velocity_model.state_dict(),
-                "visit_dec": visit_dec.state_dict(),
-                "visit_enc": visit_enc.state_dict(),
-                "tangent_proj": tangent_proj.state_dict(),
-                "code_emb": code_emb.state_dict(),
-                "lambda_recon": LAMBDA_RECON_RECTIFIED,
-                "depth": hier.max_depth,
-                "test_recall": test_recall,
-                "tree_corr": corr,
-            },
-            model_ckpt,
-        )
-        print(f"Saved rectified model checkpoint to {model_ckpt}")
+            synthetic = sample_trajectories_hyperbolic(
+                velocity_model,
+                visit_dec,
+                hier,
+                visit_enc.manifold,
+                MAX_LEN,
+                latent_dim,
+                num_samples=NUM_SAMPLES_FOR_SYNTHETIC,
+                device=device,
+            )
+            stats = traj_stats(synthetic, hier)
+            print(f"Synthetic stats (N={len(synthetic)}): {stats}")
+
+            depth_results.append((lambda_recon, best_val, test_recall, corr))
+
+            ckpt_dir = "results/checkpoints"
+            os.makedirs(ckpt_dir, exist_ok=True)
+            model_ckpt = os.path.join(
+                ckpt_dir,
+                f"hyperbolic_rectified2_lrecon{int(lambda_recon)}_depth{hier.max_depth}_best{best_val:.4f}.pt",
+            )
+            torch.save(
+                {
+                    "velocity_model": velocity_model.state_dict(),
+                    "visit_dec": visit_dec.state_dict(),
+                    "visit_enc": visit_enc.state_dict(),
+                    "tangent_proj": tangent_proj.state_dict(),
+                    "code_emb": code_emb.state_dict(),
+                    "lambda_recon": lambda_recon,
+                    "depth": hier.max_depth,
+                    "test_recall": test_recall,
+                    "tree_corr": corr,
+                },
+                model_ckpt,
+            )
+            print(f"Saved rectified model checkpoint to {model_ckpt}")
+
+        for lambda_recon, best_val, test_recall, corr in depth_results:
+            print(
+                f"[Depth {hier.max_depth}] lambda_recon={lambda_recon} | "
+                f"best_val={best_val:.6f} | test_recall={test_recall:.4f} | corr={corr:.4f}"
+            )
 
 
 if __name__ == "__main__":
