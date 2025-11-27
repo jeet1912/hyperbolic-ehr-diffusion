@@ -156,3 +156,6 @@ Sample trajectory (hyperbolic) 3:
 Tree-Embedding Correlation (lambda_recon=2000.0): 0.0973
 Synthetic (hyperbolic, lambda_recon=2000.0) stats (N=1000): {'mean_depth': 6.250875, 'std_depth': 1.0172774454600213, 'mean_tree_dist': 4.618560949476634, 'std_tree_dist': 5.321639475311989, 'mean_root_purity': 0.5625416666666667, 'std_root_purity': 0.1450395001274557}
 [Summary] depth7_final | hyperbolic | lambda_recon=2000.0: best_val=4.119239, test_recall=0.4277, corr=0.0973
+
+
+rectified!!
