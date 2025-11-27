@@ -170,3 +170,24 @@ $$ x_{t+\Delta t} = x_t + v_\theta(x_t, t) \cdot \Delta t $$
 $$ \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{flow}} + \lambda_{\text{recon}} \cdot \mathcal{L}_{\text{focal}} $$
 
 This architecture combining the stability of Rectified Flow with the geometry-aware Einstein Encoder and Distance Decoder finally bridges the gap, allowing the hyperbolic model to capture both the hierarchy and the discrete set structure of the visits.
+
+---
+
+## Part 4: Empirical Evidence from `results/analysis/table0_6.md`
+
+The sweep summarized in `results/analysis/table0_6.md` quantifies how Euclidean and hyperbolic rectified-flow models behave across shallow (depth2_final) and deep (depth7_final) hierarchies when $\lambda_{\text{recon}}$ is varied.
+
+### Depth 2 (Shallow Hierarchy)
+- **Euclidean**: Recall@4 improves monotonically with higher $\lambda_{\text{recon}}$ (0.07 at $\lambda=1$ up to 0.92 at $\lambda=1000$), but tree/embedding correlations remain near zero (best 0.05). The decoder simply learns to memorize sets without recovering the ICD tree.
+- **Hyperbolic**: Small $\lambda$ (1–100) collapse trajectories toward the root (mean depth $\approx 1.1$–1.8) and can even generate negative correlations. Once $\lambda_{\text{recon}} \ge 1000$, Recall stays in the 0.57–0.60 range while correlation rises to ~0.62, matching the real-tree metric without any HDD/HGD regularizers. These runs are the first to prove that the Einstein encoder + distance decoder can preserve shallow hierarchies for free.
+
+### Depth 7 (Deep Hierarchy)
+- **Euclidean**: All runs are unstable. Even at $\lambda_{\text{recon}} = 1000$, Recall peaks at 0.45 and correlation bounces around zero. Synthetic visits clump on a few leaves (root purity drops to 0.50 and tree-distance variance collapses), mirroring the visual samples in the log.
+- **Hyperbolic**: Low $\lambda$ (1–100) keep mean depth near the real value but correlation is negative, indicating that visits wander across unrelated branches. Increasing $\lambda_{\text{recon}}$ into the 1800–2500 range finally pushes Recall past 0.38 and correlation above 0.13, yet the latent trajectories overshoot the hierarchy (mean depth as high as 6.4 with low variance). Extremely large weights (3000–5000) maximize Recall (0.48–0.53) at the expense of correlation (down to −0.13) and produce synthetic visits tightly concentrated in the deepest leaves. These numbers explain why the plain rectified-flow objective still needs auxiliary geometric guidance for very deep trees.
+
+### Takeaways
+1. **$\lambda_{\text{recon}}$ drives reconstruction, not structure.** High values are necessary to train the decoder but do not guarantee tree fidelity—especially in Euclidean space.
+2. **Hyperbolic latents are necessary but not sufficient.** They carry the hierarchy in depth-2 experiments, yet in depth-7 they oscillate between under- and over-shooting the taxonomy depending on $\lambda_{\text{recon}}$.
+3. **Geometric regularizers are still useful.** The diffusion-based `train_toy_withDecHypNoise.py` (with Möbius noise + decoder loss) achieves nearly perfect correlation because it blends stochastic gradients with explicit manifold operations. Rectified-flow models need additional priors (HDD/HGD or radius targets) to match that behavior at scale.
+
+These observations close the loop between the architectural motivations above and the quantitative evidence in `table0_6.md`: they show precisely where the current hyperbolic rectified-flow pipeline excels (shallow hierarchies) and where further modeling work is required (deep ICD trees).

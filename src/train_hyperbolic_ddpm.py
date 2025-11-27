@@ -49,6 +49,23 @@ EXTRA_DEPTHS = [0, 5]
 
 LAMBDA_RECON_VALUES: List[float] = [500,1000,1500]
 
+
+def collect_unique_params(*modules):
+    """Return a deduplicated list of trainable parameters from the provided modules."""
+    unique: List[torch.nn.Parameter] = []
+    seen = set()
+    for module in modules:
+        if module is None:
+            continue
+        for param in module.parameters():
+            if not param.requires_grad:
+                continue
+            pid = id(param)
+            if pid not in seen:
+                seen.add(pid)
+                unique.append(param)
+    return unique
+
 def split_trajectories(
     trajs: Sequence[Sequence[Sequence[int]]],
     train_ratio: float = 0.8,
@@ -220,12 +237,7 @@ def train_model(
     n_epochs,
     lr,
 ):
-    params = (
-        list(eps_model.parameters())
-        + list(visit_enc.parameters())
-        + list(code_emb.parameters())
-        + list(visit_dec.parameters())
-    )
+    params = collect_unique_params(eps_model, visit_enc, visit_dec, code_emb)
     optimizer = torch.optim.Adam(params, lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
 

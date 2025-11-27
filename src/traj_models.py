@@ -10,7 +10,11 @@ class TrajectoryEpsModel(nn.Module):
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=dim, nhead=n_heads, dim_feedforward=ff_dim, batch_first=True
         )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.encoder = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=n_layers,
+            enable_nested_tensor=False,
+        )
         self.proj = nn.Linear(dim, dim)
 
     def forward(self, x_t, t, visit_mask=None):

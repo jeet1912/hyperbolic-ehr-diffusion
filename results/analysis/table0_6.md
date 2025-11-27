@@ -1,7 +1,7 @@
 ### depth2_final | max_depth = 2 | Real stats: {'mean_depth': 1.6439176670642877, 'std_depth': 0.5137982104125317, 'mean_tree_dist': 2.1205701725560644, 'std_tree_dist': 1.2453175481436083, 'mean_root_purity': 0.6241599458637942, 'std_root_purity': 0.2040143257571073}
 
 ### Experiment depth2_final | depth 2 | euclidean | lambda_recon=1.0
-![Loss curves](../plots/depth2_final_euclidean_lrecon1_loss.png)
+![Loss curves](../plots/forTable0_6/depth2_final_euclidean_lrecon1_loss.png)
 
 Best validation loss: 1.832076  
 Test Recall@4: 0.0672  
@@ -33,7 +33,7 @@ Sample trajectory (euclidean) 3:
   Visit 6: ['C030', 'C104', 'C142', 'C334']
 
 ### Experiment depth2_final | depth 2 | euclidean | lambda_recon=10.0
-![Loss curves](../plots/depth2_final_euclidean_lrecon10_loss.png)
+![Loss curves](../plots/forTable0_6/depth2_final_euclidean_lrecon10_loss.png)
 
 Best validation loss: 1.874482  
 Test Recall@4: 0.2493  
@@ -65,7 +65,7 @@ Sample trajectory (euclidean) 3:
   Visit 6: ['C003', 'C21', 'C33', 'C422']
 
 ### Experiment depth2_final | depth 2 | euclidean | lambda_recon=100.0
-![Loss curves](../plots/depth2_final_euclidean_lrecon100_loss.png)
+![Loss curves](../plots/forTable0_6/depth2_final_euclidean_lrecon100_loss.png)
 
 Best validation loss: 2.030545  
 Test Recall@4: 0.8702  
@@ -97,7 +97,7 @@ Sample trajectory (euclidean) 3:
   Visit 6: ['C111', 'C230', 'C401', 'C403']
 
 ### Experiment depth2_final | depth 2 | euclidean | lambda_recon=1000.0
-![Loss curves](../plots/depth2_final_euclidean_lrecon1000_loss.png)
+![Loss curves](../plots/forTable0_6/depth2_final_euclidean_lrecon1000_loss.png)
 
 Best validation loss: 2.439485  
 Test Recall@4: 0.9227  
@@ -129,7 +129,7 @@ Sample trajectory (euclidean) 3:
   Visit 6: ['C113', 'C134', 'C201', 'C30']
 
 ### Experiment depth2_final | depth 2 | hyperbolic | lambda_recon=1.0
-![Loss curves](../plots/depth2_final_hyperbolic_lrecon1_loss.png)
+![Loss curves](../plots/forTable0_6/depth2_final_hyperbolic_lrecon1_loss.png)
 
 Best validation loss: 1.979262  
 Test Recall@4: 0.0549  
@@ -161,7 +161,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C034', 'C11', 'C214', 'C223']
 
 ### Experiment depth2_final | depth 2 | hyperbolic | lambda_recon=10.0
-![Loss curves](../plots/depth2_final_hyperbolic_lrecon10_loss.png)
+![Loss curves](../plots/forTable0_6/depth2_final_hyperbolic_lrecon10_loss.png)
 
 Best validation loss: 2.870362  
 Test Recall@4: 0.0516  
@@ -193,7 +193,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C13', 'C24', 'C41', 'C42']
 
 ### Experiment depth2_final | depth 2 | hyperbolic | lambda_recon=100.0
-![Loss curves](../plots/depth2_final_hyperbolic_lrecon100_loss.png)
+![Loss curves](../plots/forTable0_6/depth2_final_hyperbolic_lrecon100_loss.png)
 
 Best validation loss: 2.415631  
 Test Recall@4: 0.1587  
@@ -225,7 +225,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C00', 'C11', 'C41']
 
 ### Experiment depth2_final | depth 2 | hyperbolic | lambda_recon=1000.0
-![Loss curves](../plots/depth2_final_hyperbolic_lrecon1000_loss.png)
+![Loss curves](../plots/forTable0_6/depth2_final_hyperbolic_lrecon1000_loss.png)
 
 Best validation loss: 5.282482  
 Test Recall@4: 0.5962  
@@ -257,7 +257,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C000', 'C32', 'C320', 'C324']
 
 ### Experiment depth2_final | depth 2 | hyperbolic | lambda_recon=2000.0
-![Loss curves](../plots/depth2_final_hyperbolic_lrecon2000_loss.png)
+![Loss curves](../plots/forTable0_6/depth2_final_hyperbolic_lrecon2000_loss.png)
 
 Best validation loss: 8.607137  
 Test Recall@4: 0.5919  
@@ -289,7 +289,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C123', 'C210', 'C212', 'C413']
 
 ### Experiment depth2_final | depth 2 | hyperbolic | lambda_recon=3000.0
-![Loss curves](../plots/depth2_final_hyperbolic_lrecon3000_loss.png)
+![Loss curves](../plots/forTable0_6/depth2_final_hyperbolic_lrecon3000_loss.png)
 
 Best validation loss: 12.012943  
 Test Recall@4: 0.5743  
@@ -323,7 +323,7 @@ Sample trajectory (hyperbolic) 3:
 ### depth7_final | max_depth = 7 | Real stats: {'mean_depth': 5.374459093875327, 'std_depth': 1.7322915840970905, 'mean_tree_dist': 5.76189079147913, 'std_tree_dist': 4.753635709372622, 'mean_root_purity': 0.6272780762911319, 'std_root_purity': 0.2050864797754083}
 
 ### Experiment depth7_final | depth 7 | euclidean | lambda_recon=1.0
-![Loss curves](../plots/depth7_final_euclidean_lrecon1_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_euclidean_lrecon1_loss.png)
 
 Best validation loss: 2.935548  
 Test Recall@4: 0.0098  
@@ -355,7 +355,7 @@ Sample trajectory (euclidean) 3:
   Visit 6: ['C230', 'C212d0', 'C310d0', 'C323d1']
 
 ### Experiment depth7_final | depth 7 | euclidean | lambda_recon=10.0
-![Loss curves](../plots/depth7_final_euclidean_lrecon10_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_euclidean_lrecon10_loss.png)
 
 Best validation loss: 2.865968  
 Test Recall@4: 0.0111  
@@ -387,7 +387,7 @@ Sample trajectory (euclidean) 3:
   Visit 6: ['C100d4', 'C134d3', 'C213d3', 'C301d4']
 
 ### Experiment depth7_final | depth 7 | euclidean | lambda_recon=100.0
-![Loss curves](../plots/depth7_final_euclidean_lrecon100_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_euclidean_lrecon100_loss.png)
 
 Best validation loss: 3.008448  
 Test Recall@4: 0.0296  
@@ -419,7 +419,7 @@ Sample trajectory (euclidean) 3:
   Visit 6: ['C231d3', 'C231d4', 'C420d3', 'C420d4']
 
 ### Experiment depth7_final | depth 7 | euclidean | lambda_recon=1000.0
-![Loss curves](../plots/depth7_final_euclidean_lrecon1000_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_euclidean_lrecon1000_loss.png)
 
 Best validation loss: 3.888043  
 Test Recall@4: 0.4498  
@@ -451,7 +451,7 @@ Sample trajectory (euclidean) 3:
   Visit 6: ['C302', 'C114d3', 'C324d1', 'C333d3']
 
 ### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=1.0
-![Loss curves](../plots/depth7_final_hyperbolic_lrecon1_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_hyperbolic_lrecon1_loss.png)
 
 Best validation loss: 1.877002  
 Test Recall@4: 0.0051  
@@ -483,7 +483,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C303', 'C123d0', 'C220d2', 'C320d1']
 
 ### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=10.0
-![Loss curves](../plots/depth7_final_hyperbolic_lrecon10_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_hyperbolic_lrecon10_loss.png)
 
 Best validation loss: 1.922391  
 Test Recall@4: 0.0125  
@@ -515,7 +515,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C03', 'C424', 'C210d1', 'C414d0']
 
 ### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=100.0
-![Loss curves](../plots/depth7_final_hyperbolic_lrecon100_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_hyperbolic_lrecon100_loss.png)
 
 Best validation loss: 1.964240  
 Test Recall@4: 0.0137  
@@ -547,7 +547,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C233', 'C234d2', 'C422d0']
 
 ### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=1000.0
-![Loss curves](../plots/depth7_final_hyperbolic_lrecon1000_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_hyperbolic_lrecon1000_loss.png)
 
 Best validation loss: 4.384935  
 Test Recall@4: 0.0617  
@@ -579,7 +579,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C312d4', 'C424d3', 'C424d4']
 
 ### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=1800
-![Loss curves](../plots/depth7_final_hyperbolic_lrecon1800_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_hyperbolic_lrecon1800_loss.png)
 
 Best validation loss: 3.964018  
 Test Recall@4: 0.3819  
@@ -611,7 +611,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C320d3', 'C320d4', 'C440d3', 'C440d4']
 
 ### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=2000
-![Loss curves](../plots/depth7_final_hyperbolic_lrecon2000_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_hyperbolic_lrecon2000_loss.png)
 
 Best validation loss: 4.160874  
 Test Recall@4: 0.4096  
@@ -643,7 +643,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C103', 'C214d2', 'C234d0', 'C402d2']
 
 ### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=2200
-![Loss curves](../plots/depth7_final_hyperbolic_lrecon2200_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_hyperbolic_lrecon2200_loss.png)
 
 Best validation loss: 4.579852  
 Test Recall@4: 0.4015  
@@ -675,7 +675,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C024d3', 'C024d4', 'C443d3', 'C443d4']
 
 ### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=2500
-![Loss curves](../plots/depth7_final_hyperbolic_lrecon2500_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_hyperbolic_lrecon2500_loss.png)
 
 Best validation loss: 4.451853  
 Test Recall@4: 0.4611  
@@ -707,7 +707,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C202d3', 'C202d4', 'C400d4', 'C421d3']
 
 ### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=3000.0
-![Loss curves](../plots/depth7_final_hyperbolic_lrecon3000_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_hyperbolic_lrecon3000_loss.png)
 
 Best validation loss: 4.934151  
 Test Recall@4: 0.4835  
@@ -739,7 +739,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C102d3', 'C440d3', 'C442d3', 'C442d4']
 
 ### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=4000.0
-![Loss curves](../plots/depth7_final_hyperbolic_lrecon4000_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_hyperbolic_lrecon4000_loss.png)
 
 Best validation loss: 5.756914  
 Test Recall@4: 0.5059  
@@ -771,7 +771,7 @@ Sample trajectory (hyperbolic) 3:
   Visit 6: ['C324', 'C044d3', 'C413d3', 'C413d4']
 
 ### Experiment depth7_final | depth 7 | hyperbolic | lambda_recon=5000.0
-![Loss curves](../plots/depth7_final_hyperbolic_lrecon5000_loss.png)
+![Loss curves](../plots/forTable0_6/depth7_final_hyperbolic_lrecon5000_loss.png)
 
 Best validation loss: 6.497522  
 Test Recall@4: 0.5283  
