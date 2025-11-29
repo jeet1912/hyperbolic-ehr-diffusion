@@ -35,15 +35,6 @@ runs/                # TensorBoard runs
 logs/
 *.tensorboard
 
-# Data files (large / generated)
-data/
-datasets/
-*.csv
-*.tsv
-*.npy
-*.npz
-*.h5
-*.hdf5
 
 # Jupyter
 .ipynb_checkpoints
