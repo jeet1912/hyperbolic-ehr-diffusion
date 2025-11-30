@@ -1,3 +1,4 @@
+-- Active: 1753949249665@@127.0.0.1@3306@mimiciii4
 WITH all_admissions AS (
     SELECT * FROM ADMISSIONS WHERE ADMISSION_TYPE != 'NEWBORN'
 ),
