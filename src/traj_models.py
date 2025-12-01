@@ -75,8 +75,11 @@ class TrajectoryVelocityModel(nn.Module):
         )
 
         self.history_proj = nn.Linear(dim, dim)
-        self.fusion_beta = nn.Linear(dim * 2, dim)
-        self.fusion_alpha = nn.Linear(dim, 2)
+        self.att_gate = nn.Linear(dim * 2, 2)
+
+        # ------------- MedDiffusion step-wise attention (Eq. 3.11–3.12) ------------- #
+        self.Wa = nn.Linear(dim, 2)
+        self.Wh = nn.Linear(dim, dim)
 
     def forward(
         self,
@@ -102,18 +105,7 @@ class TrajectoryVelocityModel(nn.Module):
         t_emb = self.time_mlp(t.float() * 999 + 1)  # map [0,1] → [1,1000]
         t_emb = t_emb.unsqueeze(1).expand(-1, L, -1)  # [B, L, dim]
 
-        fused = x_tangent
-        if history is not None:
-            if history.dim() == 2:
-                history = history.unsqueeze(1)
-            history_proj = self.history_proj(history.to(x_tangent.dtype))
-            concat = torch.cat([x_tangent, history_proj], dim=-1)
-            fusion_logits = self.fusion_alpha(torch.tanh(self.fusion_beta(concat)))
-            gamma = torch.softmax(fusion_logits, dim=-1)
-            gamma_e = gamma[..., :1]
-            gamma_h = gamma[..., 1:]
-            fused = gamma_e * x_tangent + gamma_h * history_proj
-
+        fused = self._fuse_with_history(x_tangent, history)
         h = fused + t_emb
 
         # Padding mask: Transformer ignores positions where mask is True
@@ -123,3 +115,27 @@ class TrajectoryVelocityModel(nn.Module):
         velocity = self.velocity_head(h)  # [B, L, dim]
 
         return velocity
+
+    def _fuse_with_history(self, latent: torch.Tensor, history: torch.Tensor | None) -> torch.Tensor:
+        if history is None:
+            return latent
+        if history.dim() == 2:
+            history = history.unsqueeze(1)
+        h_mapped = self.Wh(history.to(latent.dtype))
+        fusion_input = latent + h_mapped
+        gamma = torch.softmax(self.Wa(fusion_input), dim=-1)
+        gamma_e = gamma[..., :1]
+        gamma_h = gamma[..., 1:]
+        return gamma_e * latent + gamma_h * h_mapped
+
+    def fuse_latent_step(self, z_t: torch.Tensor, h_prev: torch.Tensor) -> torch.Tensor:
+        """
+        Implements MedDiffusion 3.3.3 step-wise aggregation:
+            ê = γ_e · z_t + γ_h · W_h(h_prev)
+        """
+        h_mapped = self.Wh(h_prev)
+        fusion_input = z_t + h_mapped
+        gamma = torch.softmax(self.Wa(fusion_input), dim=-1)
+        gamma_e = gamma[..., :1]
+        gamma_h = gamma[..., 1:2]
+        return gamma_e * z_t + gamma_h * h_mapped

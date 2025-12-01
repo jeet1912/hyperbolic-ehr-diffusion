@@ -366,12 +366,22 @@ def sample_from_flow(
 ):
     B, L = mask_template.shape
     latents = torch.randn(B, L, latent_dim, device=device)
-    visit_mask = mask_template.bool()
+    visit_mask = mask_template.bool().to(device)
     dt = 1.0 / steps
+    mask_expand = visit_mask.unsqueeze(-1)
     for step in range(steps):
         t = torch.full((B,), step * dt, device=device)
-        v = velocity_model(latents, t, visit_mask)
-        latents = latents + v * dt
+        v1 = velocity_model(latents, t, visit_mask)
+        fused = velocity_model.fuse_latent_step(
+            latents.view(-1, latent_dim),
+            latents.view(-1, latent_dim),
+        ).view(B, L, latent_dim)
+        fused = torch.where(mask_expand, fused, latents)
+        t_mid = t + 0.5 * dt
+        mid = fused + 0.5 * v1 * dt
+        v2 = velocity_model(mid, t_mid, visit_mask)
+        latents = fused + v2 * dt
+        latents = torch.where(mask_expand, latents, torch.zeros_like(latents))
     logits = visit_dec(tangent_proj(latents.view(B * L, -1))).view(B, L, -1)
     samples = (logits.sigmoid() > 0.5).float().cpu()
     return convert_multihot_to_sequences(samples, mask_template.cpu())
@@ -451,7 +461,8 @@ def run_epoch(
             recon = focal_loss(logits, targets, reduction="none")
             recon = (recon * mask).sum() / (mask.sum() * targets.size(-1) + 1e-8)
 
-            loss = flow_loss + lambda_recon * recon
+            geom_reg = 0.005 * radius_regularizer(visit_enc.code_emb)
+            loss = flow_loss + lambda_recon * recon + geom_reg
 
             if is_training:
                 optimizer.zero_grad()
@@ -654,8 +665,6 @@ def main():
         manifold=code_emb.manifold,
         code_freq=freq,
     ).to(device)
-    for p in code_emb.parameters():
-        p.requires_grad = False
 
     visit_enc = GraphHyperbolicVisitEncoderGlobal(
         code_emb,
@@ -705,11 +714,16 @@ def main():
 
     sample_batch = next(iter(test_loader))
     mask_template = sample_batch[2].to(device)
+    random_mask = (torch.rand_like(mask_template) > 0.25).float()
+    ensure_visit = (random_mask.sum(dim=1, keepdim=True) == 0)
+    random_mask[:, 0:1] = torch.where(
+        ensure_visit, torch.ones_like(random_mask[:, 0:1]), random_mask[:, 0:1]
+    )
     synthetic = sample_from_flow(
         velocity_model,
         visit_dec,
         tangent_proj,
-        mask_template,
+        random_mask,
         latent_dim,
         steps=20,
         device=device,

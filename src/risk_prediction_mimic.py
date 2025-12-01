@@ -7,6 +7,8 @@ from typing import List, Sequence, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, random_split
 
 from dataset import MimicDataset, make_pad_collate
@@ -28,6 +30,7 @@ LAMBDA_RADIUS = 0.003    # radius reg (pretrain only)
 LAMBDA_HDD = 0.02        # HDD-style alignment (pretrain only)
 LAMBDA_S = 1.0           # weight for synthetic risk loss (MedDiffusion λ_S)
 LAMBDA_D = 1.0           # weight for rectified-flow loss (MedDiffusion λ_D)
+LAMBDA_CONSISTENCY = 0.1 # synthetic/real feature consistency
 
 DIFFUSION_STEPS = [1, 2, 4, 8]   # graph diffusion kernel scales
 
@@ -439,7 +442,8 @@ def sample_latents_from_flow(
 ):
     """
     Sequential, conditional sampling: each visit latent depends on the
-    previous hidden state h_{k-1} (MedDiffusion Eq. 3.9-3.12).
+    previous hidden state h_{k-1} with step-wise attention fusion
+    (MedDiffusion Eq. 3.9-3.12).
     """
     B, L = visit_mask.shape
     latents = torch.zeros(B, L, latent_dim, device=device)
@@ -467,6 +471,8 @@ def sample_latents_from_flow(
                     visit_mask=visit_mask_step,
                     history=history,
                 ).squeeze(1)
+                fused_z = velocity_model.fuse_latent_step(z, h_prev)
+                z = fused_z * mask_vec
                 z = z + v * dt
                 z = z * mask_vec
 
@@ -497,6 +503,23 @@ def diffusion_embedding_correlation(code_emb, diffusion_metric, device, num_pair
     if diff_np.std() == 0 or dist_np.std() == 0:
         return 0.0
     return float(np.corrcoef(diff_np, dist_np)[0, 1])
+
+
+def plot_training_curves(train_losses, val_losses, output_path, title):
+    if not train_losses:
+        return
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    epochs = range(1, len(train_losses) + 1)
+    plt.figure(figsize=(8, 5))
+    plt.plot(epochs, train_losses, label="train")
+    plt.plot(epochs, val_losses, label="val")
+    plt.xlabel("Epoch")
+    plt.ylabel("Total loss")
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
 
 
 # ----------------------------- Temporal LSTM + Risk Head (MedDiffusion backbone) ----------------------------- #
@@ -754,7 +777,8 @@ def run_epoch(
             logits_synth = risk_head(h_synth)
             loss_synth = bce(logits_synth, labels)
 
-            loss = loss_real + lambda_s * loss_synth + lambda_d * flow_loss
+            loss_consistency = F.mse_loss(reps_real, h_synth.detach()) * LAMBDA_CONSISTENCY
+            loss = loss_real + lambda_s * loss_synth + lambda_d * flow_loss + loss_consistency
 
             if is_training:
                 optimizer.zero_grad()
@@ -789,6 +813,8 @@ def train_risk_model(
     best_val = float("inf")
     best_state = None
     patience_counter = 0
+    train_history = []
+    val_history = []
 
     for epoch in range(1, TRAIN_EPOCHS + 1):
         train_loss = run_epoch(
@@ -817,6 +843,8 @@ def train_risk_model(
         )
 
         scheduler.step()
+        train_history.append(train_loss)
+        val_history.append(val_loss)
         print(f"[HyperMedDiff-Risk] Epoch {epoch:03d} | Train {train_loss:.4f} | Val {val_loss:.4f}")
 
         if val_loss < best_val:
@@ -840,7 +868,7 @@ def train_risk_model(
         risk_lstm.load_state_dict(best_state["risk_lstm"])
         risk_head.load_state_dict(best_state["risk_head"])
 
-    return best_val
+    return best_val, train_history, val_history
 
 
 def evaluate_risk(
@@ -896,6 +924,8 @@ def main():
                         help="Path to mimic_hf_cohort pickle.")
     parser.add_argument("--output", type=str, default="results/checkpoints",
                         help="Directory for checkpoints.")
+    parser.add_argument("--plot-dir", type=str, default="results/plots",
+                        help="Directory for training curves.")
     args = parser.parse_args()
 
     device = torch.device(
@@ -974,7 +1004,7 @@ def main():
     risk_head = RiskHead(dim=latent_dim).to(device)
 
     # Train risk model
-    best_val = train_risk_model(
+    best_val, train_history, val_history = train_risk_model(
         train_loader,
         val_loader,
         velocity_model,
@@ -986,6 +1016,16 @@ def main():
         lambda_d=LAMBDA_D,
     )
     print(f"[HyperMedDiff-Risk] Best validation total loss: {best_val:.4f}")
+
+    os.makedirs(args.plot_dir, exist_ok=True)
+    plot_path = os.path.join(args.plot_dir, "risk_prediction_mimic.png")
+    plot_title = (
+        "Risk Prediction (MIMIC) | "
+        f"lambda_s={LAMBDA_S} | lambda_d={LAMBDA_D} | "
+        f"lambda_consistency={LAMBDA_CONSISTENCY} | lr={TRAIN_LR}"
+    )
+    plot_training_curves(train_history, val_history, plot_path, plot_title)
+    print(f"[HyperMedDiff-Risk] Saved training curve plot to {plot_path}")
 
     # Risk metrics on test set
     risk_metrics = evaluate_risk(test_loader, visit_enc, risk_lstm, risk_head, device)
