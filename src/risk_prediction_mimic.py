@@ -510,7 +510,7 @@ def plot_training_curves(train_losses, val_losses, output_path, title):
         return
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     epochs = range(1, len(train_losses) + 1)
-    plt.figure(figsize=(8, 5))
+    plt.figure(figsize=(15, 15))
     plt.plot(epochs, train_losses, label="train")
     plt.plot(epochs, val_losses, label="val")
     plt.xlabel("Epoch")
@@ -635,7 +635,7 @@ def auroc_score(y_true, y_prob):
     fps = np.cumsum(y_true_sorted == 0)
     tpr = tps / pos
     fpr = fps / neg
-    return float(np.trapz(tpr, fpr))
+    return float(np.trapezoid(tpr, fpr))
 
 
 def auprc_score(y_true, y_prob):
@@ -653,7 +653,7 @@ def auprc_score(y_true, y_prob):
     idx = np.argsort(recall)
     recall_sorted = recall[idx]
     precision_sorted = precision[idx]
-    return float(np.trapz(precision_sorted, recall_sorted))
+    return float(np.trapezoid(precision_sorted, recall_sorted))
 
 
 def cohen_kappa(y_true, y_pred):

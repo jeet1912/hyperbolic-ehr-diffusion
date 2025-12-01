@@ -355,6 +355,23 @@ def convert_multihot_to_sequences(multihot: torch.Tensor, mask: torch.Tensor):
     return sequences
 
 
+def logits_to_multihot(logits: torch.Tensor, k: int = 128, min_prob: float = 0.01) -> torch.Tensor:
+    probs = logits.sigmoid()
+    topk_vals, topk_idx = probs.topk(k=k, dim=-1)
+    multihot = torch.zeros_like(probs)
+    keep = topk_vals >= min_prob
+    scatter_vals = keep.float()
+    multihot.scatter_(dim=-1, index=topk_idx, src=scatter_vals)
+    multihot[..., 0] = 0  # remove PAD code if 0 reserved for pad
+    no_code = multihot.sum(dim=-1, keepdim=True) == 0
+    if no_code.any():
+        top1_idx = probs.argmax(dim=-1, keepdim=True)
+        fallback = torch.zeros_like(multihot)
+        fallback.scatter_(dim=-1, index=top1_idx, src=torch.ones_like(top1_idx, dtype=multihot.dtype))
+        multihot = torch.where(no_code.expand_as(multihot), fallback, multihot)
+    return multihot
+
+
 def sample_from_flow(
     velocity_model,
     visit_dec,
@@ -367,23 +384,20 @@ def sample_from_flow(
     B, L = mask_template.shape
     latents = torch.randn(B, L, latent_dim, device=device)
     visit_mask = mask_template.bool().to(device)
-    dt = 1.0 / steps
     mask_expand = visit_mask.unsqueeze(-1)
-    for step in range(steps):
-        t = torch.full((B,), step * dt, device=device)
-        v1 = velocity_model(latents, t, visit_mask)
-        fused = velocity_model.fuse_latent_step(
-            latents.view(-1, latent_dim),
-            latents.view(-1, latent_dim),
-        ).view(B, L, latent_dim)
-        fused = torch.where(mask_expand, fused, latents)
-        t_mid = t + 0.5 * dt
-        mid = fused + 0.5 * v1 * dt
-        v2 = velocity_model(mid, t_mid, visit_mask)
-        latents = fused + v2 * dt
+    dt = 1.0 / steps
+    for n in range(steps):
+        t_n = torch.full((B,), n * dt, device=device)
+        v1 = velocity_model(latents, t_n, visit_mask)
+        latents_pred = latents + dt * v1
+        latents_pred = torch.where(mask_expand, latents_pred, latents)
+        t_np1 = t_n + dt
+        v2 = velocity_model(latents_pred, t_np1, visit_mask)
+        latents = latents + 0.5 * dt * (v1 + v2)
         latents = torch.where(mask_expand, latents, torch.zeros_like(latents))
     logits = visit_dec(tangent_proj(latents.view(B * L, -1))).view(B, L, -1)
-    samples = (logits.sigmoid() > 0.5).float().cpu()
+    logits[..., 0] = -1e9
+    samples = logits_to_multihot(logits, k=128, min_prob=0.01).cpu()
     return convert_multihot_to_sequences(samples, mask_template.cpu())
 
 
@@ -408,7 +422,7 @@ def plot_training_curves(train_losses, val_losses, output_path, title):
         return
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     epochs = range(1, len(train_losses) + 1)
-    plt.figure(figsize=(8, 5))
+    plt.figure(figsize=(15, 15))
     plt.plot(epochs, train_losses, label="train")
     plt.plot(epochs, val_losses, label="val")
     plt.xlabel("Epoch")
@@ -461,8 +475,7 @@ def run_epoch(
             recon = focal_loss(logits, targets, reduction="none")
             recon = (recon * mask).sum() / (mask.sum() * targets.size(-1) + 1e-8)
 
-            geom_reg = 0.005 * radius_regularizer(visit_enc.code_emb)
-            loss = flow_loss + lambda_recon * recon + geom_reg
+            loss = flow_loss + lambda_recon * recon
 
             if is_training:
                 optimizer.zero_grad()
@@ -658,6 +671,8 @@ def main():
     code_emb = pretrain_code_embedding(
         dataset.x, dataset.vocab_size, EMBED_DIM, device, diffusion_metric
     )
+    for p in code_emb.parameters():
+        p.requires_grad = False
     pre_corr = diffusion_embedding_correlation(code_emb, diffusion_metric, device)
     print(f"[Rect-GD] Diffusion/embedding correlation after pretraining: {pre_corr:.4f}")
     visit_dec = HyperbolicDistanceDecoder(
@@ -725,7 +740,7 @@ def main():
         tangent_proj,
         random_mask,
         latent_dim,
-        steps=20,
+        steps=64,
         device=device,
     )
     synthetic_stats = mimic_traj_stats(synthetic)
