@@ -8,6 +8,8 @@ __pycache__/
 *.so
 *.dylib
 
+*.csv
+
 # Distribution / packaging
 build/
 dist/

@@ -1,4 +1,3 @@
--- Active: 1753949249665@@127.0.0.1@3306@mimiciii4
 WITH all_admissions AS (
     SELECT * FROM ADMISSIONS WHERE ADMISSION_TYPE != 'NEWBORN'
 ),
@@ -117,4 +116,143 @@ SELECT
     (SELECT COUNT(*) FROM global_vocabulary) as Unique_ICD9_Codes;
 
 
+DROP TABLE IF EXISTS tmp_all_admissions;
+CREATE TABLE tmp_all_admissions AS
+SELECT *
+FROM ADMISSIONS
+WHERE ADMISSION_TYPE != 'NEWBORN';
 
+DROP TABLE IF EXISTS tmp_patient_features;
+CREATE TABLE tmp_patient_features AS
+SELECT 
+    p.SUBJECT_ID,
+    p.GENDER,
+    p.DOB,
+    TIMESTAMPDIFF(YEAR, p.DOB, MIN(a.ADMITTIME)) AS AGE,
+    COUNT(DISTINCT a.HADM_ID) AS TOTAL_VISITS,
+    CASE 
+        WHEN MAX(a.ETHNICITY) LIKE '%WHITE%' THEN 'WHITE'
+        WHEN MAX(a.ETHNICITY) LIKE '%BLACK%' OR MAX(a.ETHNICITY) LIKE '%AFRICAN%' THEN 'BLACK'
+        WHEN MAX(a.ETHNICITY) LIKE '%HISPANIC%' OR MAX(a.ETHNICITY) LIKE '%LATINO%' THEN 'HISPANIC'
+        WHEN MAX(a.ETHNICITY) LIKE '%ASIAN%' THEN 'ASIAN'
+        ELSE NULL 
+    END AS RACE_BUCKET
+FROM PATIENTS p
+JOIN tmp_all_admissions a ON p.SUBJECT_ID = a.SUBJECT_ID
+GROUP BY p.SUBJECT_ID, p.GENDER, p.DOB;
+
+DROP TABLE IF EXISTS tmp_positive_candidates;
+CREATE TABLE tmp_positive_candidates AS
+SELECT 
+    d.SUBJECT_ID,
+    MIN(a.ADMITTIME) AS INDEX_DATE,
+    1 AS LABEL,
+    SUBSTRING_INDEX(GROUP_CONCAT(a.HADM_ID ORDER BY a.ADMITTIME ASC), ',', 1) AS INDEX_HADM_ID
+FROM DIAGNOSES_ICD d
+JOIN tmp_all_admissions a ON d.HADM_ID = a.HADM_ID
+WHERE d.ICD9_CODE LIKE '428%' 
+  AND a.ADMISSION_TYPE != 'ELECTIVE'
+GROUP BY d.SUBJECT_ID;
+
+DROP TABLE IF EXISTS tmp_final_positives;
+CREATE TABLE tmp_final_positives AS
+SELECT pc.*
+FROM tmp_positive_candidates pc
+JOIN tmp_all_admissions a ON pc.INDEX_HADM_ID = a.HADM_ID
+WHERE a.HOSPITAL_EXPIRE_FLAG = 0;
+
+DROP TABLE IF EXISTS tmp_negative_candidates;
+CREATE TABLE tmp_negative_candidates AS
+SELECT 
+    pf.SUBJECT_ID,
+    MAX(a.DISCHTIME) AS INDEX_DATE,
+    0 AS LABEL
+FROM tmp_patient_features pf
+JOIN tmp_all_admissions a ON pf.SUBJECT_ID = a.SUBJECT_ID
+WHERE pf.SUBJECT_ID NOT IN (SELECT SUBJECT_ID FROM tmp_positive_candidates)
+GROUP BY pf.SUBJECT_ID;
+
+DROP TABLE IF EXISTS tmp_valid_pool;
+CREATE TABLE tmp_valid_pool AS
+SELECT 
+    pf.SUBJECT_ID,
+    CASE WHEN pos.SUBJECT_ID IS NOT NULL THEN 1 ELSE 0 END AS LABEL,
+    COALESCE(pos.INDEX_DATE, neg.INDEX_DATE) AS INDEX_DATE,
+    pf.GENDER,
+    pf.AGE,
+    pf.RACE_BUCKET,
+    pf.TOTAL_VISITS
+FROM tmp_patient_features pf
+LEFT JOIN tmp_final_positives pos ON pf.SUBJECT_ID = pos.SUBJECT_ID
+LEFT JOIN tmp_negative_candidates neg ON pf.SUBJECT_ID = neg.SUBJECT_ID
+WHERE pf.AGE >= 18 
+  AND pf.TOTAL_VISITS >= 2 
+  AND pf.RACE_BUCKET IS NOT NULL
+  AND (pos.SUBJECT_ID IS NOT NULL OR neg.SUBJECT_ID IS NOT NULL);
+
+DROP TABLE IF EXISTS tmp_matched_cohort;
+CREATE TABLE tmp_matched_cohort AS
+SELECT SUBJECT_ID, LABEL, INDEX_DATE
+FROM tmp_valid_pool
+WHERE LABEL = 1
+UNION ALL
+SELECT SUBJECT_ID, LABEL, INDEX_DATE
+FROM (
+    SELECT 
+        neg.SUBJECT_ID,
+        neg.LABEL,
+        neg.INDEX_DATE,
+        ROW_NUMBER() OVER (PARTITION BY pos.SUBJECT_ID ORDER BY RAND()) AS match_rank
+    FROM tmp_valid_pool pos
+    JOIN tmp_valid_pool neg 
+      ON pos.LABEL = 1 AND neg.LABEL = 0
+      AND pos.GENDER = neg.GENDER
+      AND pos.RACE_BUCKET = neg.RACE_BUCKET
+      AND neg.AGE = pos.AGE
+      AND neg.TOTAL_VISITS BETWEEN pos.TOTAL_VISITS AND (pos.TOTAL_VISITS + 4)
+) ranked
+WHERE match_rank <= 2;
+
+DROP TABLE IF EXISTS tmp_windowed_data;
+CREATE TABLE tmp_windowed_data AS
+SELECT 
+    mc.SUBJECT_ID,
+    a.HADM_ID
+FROM tmp_matched_cohort mc
+JOIN tmp_all_admissions a ON mc.SUBJECT_ID = a.SUBJECT_ID
+WHERE a.ADMITTIME >= DATE_SUB(mc.INDEX_DATE, INTERVAL 1 YEAR)
+  AND a.ADMITTIME <= mc.INDEX_DATE;
+
+DROP TABLE IF EXISTS tmp_windowed_codes;
+CREATE TABLE tmp_windowed_codes AS
+SELECT wd.HADM_ID, d.ICD9_CODE
+FROM tmp_windowed_data wd
+JOIN DIAGNOSES_ICD d ON wd.HADM_ID = d.HADM_ID
+WHERE d.ICD9_CODE NOT LIKE 'E%';
+
+DROP TABLE IF EXISTS tmp_global_vocabulary;
+CREATE TABLE tmp_global_vocabulary AS
+SELECT DISTINCT d.ICD9_CODE
+FROM tmp_matched_cohort mc
+JOIN tmp_all_admissions a ON mc.SUBJECT_ID = a.SUBJECT_ID
+JOIN DIAGNOSES_ICD d ON a.HADM_ID = d.HADM_ID
+WHERE d.ICD9_CODE NOT LIKE 'E%'
+UNION
+SELECT DISTINCT p.ICD9_CODE
+FROM tmp_matched_cohort mc
+JOIN tmp_all_admissions a ON mc.SUBJECT_ID = a.SUBJECT_ID
+JOIN PROCEDURES_ICD p ON a.HADM_ID = p.HADM_ID;
+
+SELECT 
+    'MIMIC' AS Dataset,
+    (SELECT COUNT(*) FROM tmp_matched_cohort WHERE LABEL = 1) AS Positive_Cases,
+    (SELECT COUNT(*) FROM tmp_matched_cohort WHERE LABEL = 0) AS Negative_Cases,
+    (
+        SELECT ROUND(COUNT(*) / COUNT(DISTINCT SUBJECT_ID), 2)
+        FROM tmp_windowed_data
+    ) AS Avg_Visits_Per_Patient,
+    (
+        SELECT ROUND(COUNT(*) / (SELECT COUNT(*) FROM tmp_windowed_data), 2)
+        FROM tmp_windowed_codes
+    ) AS Avg_Code_Per_Visit,
+    (SELECT COUNT(*) FROM tmp_global_vocabulary) AS Unique_ICD9_Codes;
