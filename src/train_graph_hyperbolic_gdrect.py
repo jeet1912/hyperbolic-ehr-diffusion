@@ -355,20 +355,16 @@ def convert_multihot_to_sequences(multihot: torch.Tensor, mask: torch.Tensor):
     return sequences
 
 
-def logits_to_multihot(logits: torch.Tensor, k: int = 128, min_prob: float = 0.01) -> torch.Tensor:
+def logits_to_multihot(logits: torch.Tensor, k: int = 64) -> torch.Tensor:
+    """
+    Turn logits into a multi-hot with exactly k active codes per non-padded visit
+    (except PAD=0, which we always zero out). Used only for sampling.
+    """
     probs = logits.sigmoid()
-    topk_vals, topk_idx = probs.topk(k=k, dim=-1)
+    _, topk_idx = probs.topk(k=k, dim=-1)
     multihot = torch.zeros_like(probs)
-    keep = topk_vals >= min_prob
-    scatter_vals = keep.float()
-    multihot.scatter_(dim=-1, index=topk_idx, src=scatter_vals)
-    multihot[..., 0] = 0  # remove PAD code if 0 reserved for pad
-    no_code = multihot.sum(dim=-1, keepdim=True) == 0
-    if no_code.any():
-        top1_idx = probs.argmax(dim=-1, keepdim=True)
-        fallback = torch.zeros_like(multihot)
-        fallback.scatter_(dim=-1, index=top1_idx, src=torch.ones_like(top1_idx, dtype=multihot.dtype))
-        multihot = torch.where(no_code.expand_as(multihot), fallback, multihot)
+    multihot.scatter_(dim=-1, index=topk_idx, src=torch.ones_like(topk_idx, dtype=multihot.dtype))
+    multihot[..., 0] = 0  # never predict PAD
     return multihot
 
 
@@ -397,7 +393,7 @@ def sample_from_flow(
         latents = torch.where(mask_expand, latents, torch.zeros_like(latents))
     logits = visit_dec(tangent_proj(latents.view(B * L, -1))).view(B, L, -1)
     logits[..., 0] = -1e9
-    samples = logits_to_multihot(logits, k=128, min_prob=0.01).cpu()
+    samples = logits_to_multihot(logits, k=64).cpu()
     return convert_multihot_to_sequences(samples, mask_template.cpu())
 
 
@@ -723,6 +719,10 @@ def main():
         test_loader, visit_enc, visit_dec, tangent_proj, device, k=4
     )
     print(f"[Rect-GD] Test Recall@4: {test_recall:.4f}")
+    test_recall64 = evaluate_recall(
+        test_loader, visit_enc, visit_dec, tangent_proj, device, k=64
+    )
+    print(f"[Rect-GD] Test Recall@64: {test_recall64:.4f}")
 
     diff_corr = diffusion_embedding_correlation(code_emb, diffusion_metric, device)
     print(f"[Rect-GD] Diffusion/embedding correlation after training: {diff_corr:.4f}")
@@ -758,6 +758,7 @@ def main():
             "lambda_recon": LAMBDA_RECON,
             "test_recon_focal": test_loss,
             "test_recall@4": test_recall,
+            "test_recall@64": test_recall64,
             "pretrain_diff_corr": pre_corr,
             "post_diff_corr": diff_corr,
         },

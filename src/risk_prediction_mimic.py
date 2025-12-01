@@ -32,7 +32,162 @@ LAMBDA_S = 1.0           # weight for synthetic risk loss (MedDiffusion λ_S)
 LAMBDA_D = 1.0           # weight for rectified-flow loss (MedDiffusion λ_D)
 LAMBDA_CONSISTENCY = 0.1 # synthetic/real feature consistency
 
-DIFFUSION_STEPS = [1, 2, 4, 8]   # graph diffusion kernel scales
+GRID_DIFFUSION_STEPS = [
+    [1, 2, 4, 8],
+    [1, 2],
+    [1, 2, 4, 8, 16],
+    [1],
+]
+GRID_EMBED_DIM = [64, EMBED_DIM, 256]
+GRID_LAMBDA_HDD = [0.0, LAMBDA_HDD, 0.1]
+GRID_LAMBDA_RADIUS = [0.001, LAMBDA_RADIUS, 0.01]
+GRID_LAMBDA_S = [0.5, LAMBDA_S, 2.0]
+GRID_LAMBDA_D = [LAMBDA_D]
+GRID_LAMBDA_CONSISTENCY = [0.1, LAMBDA_CONSISTENCY, 1.0]
+GRID_TRAIN_LR = [5e-5, TRAIN_LR, 2e-4]
+GRID_DROPOUT = [0.2, 0.3, 0.5]
+GRID_TRAIN_EPOCHS = [TRAIN_EPOCHS]
+
+
+def _format_scalar_value(value):
+    if isinstance(value, float):
+        val_str = f"{value:.6g}"
+    else:
+        val_str = str(value)
+    return val_str.replace("-", "m").replace(".", "p")
+
+
+def _format_value_for_name(value):
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return "x".join(_format_scalar_value(v) for v in value)
+    return _format_scalar_value(value)
+
+
+def make_run_tag(config: dict, keys: Sequence[str]) -> str:
+    parts = []
+    for key in keys:
+        val = config[key]
+        parts.append(f"{key}{_format_value_for_name(val)}")
+    return "_".join(parts)
+
+
+RUN_TAG_KEYS = [
+    "diffusion_steps",
+    "embed_dim",
+    "lambda_hdd",
+    "dropout",
+    "train_lr",
+    "train_epochs",
+    "lambda_radius",
+    "lambda_s",
+    "lambda_d",
+    "lambda_consistency",
+]
+
+
+def _normalize_for_key(value):
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return tuple(value)
+    return value
+
+
+def _config_key(config: dict):
+    return tuple(sorted((name, _normalize_for_key(value)) for name, value in config.items()))
+
+
+def collect_grid_configs():
+    base_config = {
+        "diffusion_steps": copy.deepcopy(GRID_DIFFUSION_STEPS[0]),
+        "embed_dim": EMBED_DIM,
+        "lambda_hdd": LAMBDA_HDD,
+        "dropout": DROPOUT_RATE,
+        "train_lr": TRAIN_LR,
+        "train_epochs": TRAIN_EPOCHS,
+        "lambda_radius": LAMBDA_RADIUS,
+        "lambda_s": LAMBDA_S,
+        "lambda_d": LAMBDA_D,
+        "lambda_consistency": LAMBDA_CONSISTENCY,
+    }
+
+    configs = []
+    seen = set()
+
+    def add_config(cfg):
+        key = _config_key(cfg)
+        if key in seen:
+            return
+        seen.add(key)
+        configs.append(copy.deepcopy(cfg))
+
+    add_config(base_config)
+
+    # Geometry-focused sweeps
+    for steps in GRID_DIFFUSION_STEPS:
+        for embed_dim in GRID_EMBED_DIM:
+            for lambda_hdd in GRID_LAMBDA_HDD:
+                cfg = base_config.copy()
+                cfg["diffusion_steps"] = copy.deepcopy(steps)
+                cfg["embed_dim"] = embed_dim
+                cfg["lambda_hdd"] = lambda_hdd
+                add_config(cfg)
+
+    # Training dynamics sweeps
+    for dropout in GRID_DROPOUT:
+        for train_lr in GRID_TRAIN_LR:
+            for lambda_radius in GRID_LAMBDA_RADIUS:
+                cfg = base_config.copy()
+                cfg["dropout"] = dropout
+                cfg["train_lr"] = train_lr
+                cfg["lambda_radius"] = lambda_radius
+                add_config(cfg)
+
+    # MedDiffusion-specific sweeps
+    for lambda_s in GRID_LAMBDA_S:
+        for lambda_consistency in GRID_LAMBDA_CONSISTENCY:
+            cfg = base_config.copy()
+            cfg["lambda_s"] = lambda_s
+            cfg["lambda_consistency"] = lambda_consistency
+            add_config(cfg)
+
+    return configs
+
+
+def print_summary_table(records: List[dict]):
+    if not records:
+        print("[HyperMedDiff-Risk] No runs to summarize.")
+        return
+
+    headers = ["Run", "Tag", "ValLoss", "AUROC", "AUPRC", "Accuracy", "F1"]
+    rows = []
+    for rec in records:
+        metrics = rec.get("risk_metrics") or {}
+        rows.append(
+            [
+                str(rec.get("run_index", "")),
+                rec.get("run_tag", ""),
+                f"{rec.get('best_val_loss', 0.0):.4f}",
+                f"{metrics.get('auroc', 0.0):.4f}",
+                f"{metrics.get('auprc', 0.0):.4f}",
+                f"{metrics.get('accuracy', 0.0):.4f}",
+                f"{metrics.get('f1', 0.0):.4f}",
+            ]
+        )
+
+    col_widths = [len(header) for header in headers]
+    for row in rows:
+        for idx, cell in enumerate(row):
+            col_widths[idx] = max(col_widths[idx], len(cell))
+
+    def format_row(row_vals):
+        return " | ".join(
+            cell.ljust(col_widths[idx]) for idx, cell in enumerate(row_vals)
+        )
+
+    print("[HyperMedDiff-Risk] ==== Grid Summary ====")
+    print(format_row(headers))
+    print("-+-".join("-" * w for w in col_widths))
+    for row in rows:
+        print(format_row(row))
 
 
 # ----------------------------- Utils ----------------------------- #
@@ -289,6 +444,8 @@ def pretrain_code_embedding(
     dim: int,
     device: torch.device,
     diffusion_metric: MimicDiffusionMetric,
+    lambda_radius: float = LAMBDA_RADIUS,
+    lambda_hdd: float = LAMBDA_HDD,
 ):
     """
     Pretrain HyperbolicCodeEmbedding with radius + HDD-style loss (no labels).
@@ -303,7 +460,7 @@ def pretrain_code_embedding(
         code_emb.train()
         loss_rad = radius_regularizer(code_emb)
         loss_hdd = diffusion_metric.embedding_loss(code_emb, device=device, num_pairs=2048)
-        loss = LAMBDA_RADIUS * loss_rad + LAMBDA_HDD * loss_hdd
+        loss = lambda_radius * loss_rad + lambda_hdd * loss_hdd
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -312,7 +469,7 @@ def pretrain_code_embedding(
             code_emb.eval()
             val_rad = radius_regularizer(code_emb)
             val_hdd = diffusion_metric.embedding_loss(code_emb, device=device, num_pairs=2048)
-            val_loss = LAMBDA_RADIUS * val_rad + LAMBDA_HDD * val_hdd
+            val_loss = lambda_radius * val_rad + lambda_hdd * val_hdd
 
         print(f"[Pretrain] Epoch {epoch:02d} | train={loss.item():.4f} | val={val_loss.item():.4f}")
         if val_loss < best_val:
@@ -712,6 +869,7 @@ def run_epoch(
     device,
     lambda_s,
     lambda_d,
+    lambda_consistency,
     synthetic_steps: int = 10,
     optimizer=None,
 ):
@@ -777,7 +935,7 @@ def run_epoch(
             logits_synth = risk_head(h_synth)
             loss_synth = bce(logits_synth, labels)
 
-            loss_consistency = F.mse_loss(reps_real, h_synth.detach()) * LAMBDA_CONSISTENCY
+            loss_consistency = F.mse_loss(reps_real, h_synth.detach()) * lambda_consistency
             loss = loss_real + lambda_s * loss_synth + lambda_d * flow_loss + loss_consistency
 
             if is_training:
@@ -802,13 +960,17 @@ def train_risk_model(
     device,
     lambda_s,
     lambda_d,
+    lambda_consistency,
+    train_lr,
+    train_epochs,
+    early_stop_patience,
 ):
     optimizer = torch.optim.AdamW(
         collect_unique_params(velocity_model, visit_enc, risk_lstm, risk_head),
-        lr=TRAIN_LR,
+        lr=train_lr,
         weight_decay=1e-5,
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=TRAIN_EPOCHS)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=train_epochs)
 
     best_val = float("inf")
     best_state = None
@@ -816,7 +978,7 @@ def train_risk_model(
     train_history = []
     val_history = []
 
-    for epoch in range(1, TRAIN_EPOCHS + 1):
+    for epoch in range(1, train_epochs + 1):
         train_loss = run_epoch(
             train_loader,
             velocity_model,
@@ -826,6 +988,7 @@ def train_risk_model(
             device,
             lambda_s=lambda_s,
             lambda_d=lambda_d,
+            lambda_consistency=lambda_consistency,
             synthetic_steps=10,
             optimizer=optimizer,
         )
@@ -838,6 +1001,7 @@ def train_risk_model(
             device,
             lambda_s=lambda_s,
             lambda_d=lambda_d,
+            lambda_consistency=lambda_consistency,
             synthetic_steps=10,
             optimizer=None,
         )
@@ -858,7 +1022,7 @@ def train_risk_model(
             patience_counter = 0
         else:
             patience_counter += 1
-            if patience_counter >= EARLY_STOP_PATIENCE:
+            if patience_counter >= early_stop_patience:
                 print("[HyperMedDiff-Risk] Early stopping.")
                 break
 
@@ -959,105 +1123,145 @@ def main():
     real_stats = mimic_traj_stats(dataset.x)
     print(f"[HyperMedDiff-Risk] Real trajectory stats: {json.dumps(real_stats, indent=2)}")
 
-    # HDD metric + pretraining
-    diffusion_metric = MimicDiffusionMetric.from_sequences(
-        dataset.x, vocab_size=dataset.vocab_size, steps=DIFFUSION_STEPS, device=device
-    )
-    diffusion_kernels = build_diffusion_kernels_from_sequences(
-        dataset.x, dataset.vocab_size, DIFFUSION_STEPS, device
-    )
-
-    code_emb = pretrain_code_embedding(
-        dataset.x, dataset.vocab_size, EMBED_DIM, device, diffusion_metric
-    )
-    pre_corr = diffusion_embedding_correlation(code_emb, diffusion_metric, device)
-    print(f"[HyperMedDiff-Risk] Diffusion/embedding correlation after pretraining: {pre_corr:.4f}")
-
-    # Freeze code embeddings for downstream risk + flow training
-    for p in code_emb.parameters():
-        p.requires_grad = False
-
-    # Visit encoder (HGDM-style)
-    visit_enc = GraphHyperbolicVisitEncoderGlobal(
-        code_emb,
-        pad_idx=0,
-        diffusion_kernels=diffusion_kernels,
-        num_attn_layers=3,
-        num_heads=4,
-        ff_dim=256,
-        dropout=DROPOUT_RATE,
-    ).to(device)
-    latent_dim = visit_enc.output_dim
-
-    # Rectified flow over visit latents
-    velocity_model = TrajectoryVelocityModel(
-        dim=latent_dim, n_layers=6, n_heads=8, ff_dim=1024
-    ).to(device)
-
-    # MedDiffusion-style LSTM + risk head
-    risk_lstm = TemporalLSTMEncoder(
-        dim=latent_dim,
-        hidden_dim=latent_dim,   # keep same dim for simplicity
-        num_layers=1,
-        dropout=DROPOUT_RATE,
-    ).to(device)
-    risk_head = RiskHead(dim=latent_dim).to(device)
-
-    # Train risk model
-    best_val, train_history, val_history = train_risk_model(
-        train_loader,
-        val_loader,
-        velocity_model,
-        visit_enc,
-        risk_lstm,
-        risk_head,
-        device,
-        lambda_s=LAMBDA_S,
-        lambda_d=LAMBDA_D,
-    )
-    print(f"[HyperMedDiff-Risk] Best validation total loss: {best_val:.4f}")
-
     os.makedirs(args.plot_dir, exist_ok=True)
-    plot_path = os.path.join(args.plot_dir, "risk_prediction_mimic.png")
-    plot_title = (
-        "Risk Prediction (MIMIC) | "
-        f"lambda_s={LAMBDA_S} | lambda_d={LAMBDA_D} | "
-        f"lambda_consistency={LAMBDA_CONSISTENCY} | lr={TRAIN_LR}"
-    )
-    plot_training_curves(train_history, val_history, plot_path, plot_title)
-    print(f"[HyperMedDiff-Risk] Saved training curve plot to {plot_path}")
-
-    # Risk metrics on test set
-    risk_metrics = evaluate_risk(test_loader, visit_enc, risk_lstm, risk_head, device)
-    print("[HyperMedDiff-Risk] Test risk metrics (MedDiffusion-style):")
-    print(json.dumps(risk_metrics, indent=2))
-
-    # HDD correlation after training
-    diff_corr = diffusion_embedding_correlation(code_emb, diffusion_metric, device)
-    print(f"[HyperMedDiff-Risk] Diffusion/embedding correlation after training: {diff_corr:.4f}")
-
-    # Save checkpoint
     os.makedirs(args.output, exist_ok=True)
-    ckpt_path = os.path.join(
-        args.output,
-        f"hypermeddiff_risk_best_{best_val:.4f}.pt",
-    )
-    torch.save(
-        {
-            "velocity_model": velocity_model.state_dict(),
-            "visit_enc": visit_enc.state_dict(),
-            "risk_lstm": risk_lstm.state_dict(),
-            "risk_head": risk_head.state_dict(),
-            "code_emb": code_emb.state_dict(),
-            "lambda_s": LAMBDA_S,
-            "lambda_d": LAMBDA_D,
-            "pretrain_diff_corr": pre_corr,
-            "post_diff_corr": diff_corr,
-            "risk_metrics": risk_metrics,
-        },
-        ckpt_path,
-    )
-    print(f"Saved checkpoint to {ckpt_path}")
+
+    grid_configs = collect_grid_configs()
+    print(f"[HyperMedDiff-Risk] Running {len(grid_configs)} grid configurations.")
+    summary_records = []
+
+    for run_idx, config in enumerate(grid_configs, start=1):
+        print(f"[HyperMedDiff-Risk] ===== Grid run {run_idx}/{len(grid_configs)}: {config} =====")
+        diffusion_metric = MimicDiffusionMetric.from_sequences(
+            dataset.x,
+            vocab_size=dataset.vocab_size,
+            steps=config["diffusion_steps"],
+            device=device,
+        )
+        diffusion_kernels = build_diffusion_kernels_from_sequences(
+            dataset.x,
+            dataset.vocab_size,
+            config["diffusion_steps"],
+            device,
+        )
+
+        code_emb = pretrain_code_embedding(
+            dataset.x,
+            dataset.vocab_size,
+            config["embed_dim"],
+            device,
+            diffusion_metric,
+            lambda_radius=config["lambda_radius"],
+            lambda_hdd=config["lambda_hdd"],
+        )
+        pre_corr = diffusion_embedding_correlation(code_emb, diffusion_metric, device)
+        print(f"[HyperMedDiff-Risk] Diffusion/embedding correlation after pretraining: {pre_corr:.4f}")
+
+        for p in code_emb.parameters():
+            p.requires_grad = False
+
+        visit_enc = GraphHyperbolicVisitEncoderGlobal(
+            code_emb,
+            pad_idx=0,
+            diffusion_kernels=diffusion_kernels,
+            num_attn_layers=3,
+            num_heads=4,
+            ff_dim=256,
+            dropout=config["dropout"],
+        ).to(device)
+        latent_dim = visit_enc.output_dim
+
+        velocity_model = TrajectoryVelocityModel(
+            dim=latent_dim, n_layers=6, n_heads=8, ff_dim=1024
+        ).to(device)
+
+        risk_lstm = TemporalLSTMEncoder(
+            dim=latent_dim,
+            hidden_dim=latent_dim,
+            num_layers=1,
+            dropout=config["dropout"],
+        ).to(device)
+        risk_head = RiskHead(dim=latent_dim).to(device)
+
+        best_val, train_history, val_history = train_risk_model(
+            train_loader,
+            val_loader,
+            velocity_model,
+            visit_enc,
+            risk_lstm,
+            risk_head,
+            device,
+            lambda_s=config["lambda_s"],
+            lambda_d=config["lambda_d"],
+            lambda_consistency=config["lambda_consistency"],
+            train_lr=config["train_lr"],
+            train_epochs=int(config["train_epochs"]),
+            early_stop_patience=EARLY_STOP_PATIENCE,
+        )
+        print(f"[HyperMedDiff-Risk] Best validation total loss (run {run_idx}): {best_val:.4f}")
+
+        run_tag = make_run_tag(config, RUN_TAG_KEYS)
+        plot_path = os.path.join(args.plot_dir, f"risk_prediction_mimic_{run_tag}.png")
+        plot_title = (
+            "Risk Prediction (MIMIC) | "
+            f"lambda_s={config['lambda_s']} | lambda_d={config['lambda_d']} | "
+            f"lambda_consistency={config['lambda_consistency']} | dropout={config['dropout']} | "
+            f"lr={config['train_lr']} | epochs={config['train_epochs']} | "
+            f"lambda_radius={config['lambda_radius']} | lambda_hdd={config['lambda_hdd']} | "
+            f"diffusion_steps={'-'.join(str(d) for d in config['diffusion_steps'])} | "
+            f"embed_dim={config['embed_dim']}"
+        )
+        plot_training_curves(train_history, val_history, plot_path, plot_title)
+        print(f"[HyperMedDiff-Risk] Saved training curve plot to {plot_path}")
+
+        risk_metrics = evaluate_risk(test_loader, visit_enc, risk_lstm, risk_head, device)
+        print("[HyperMedDiff-Risk] Test risk metrics (MedDiffusion-style):")
+        print(json.dumps(risk_metrics, indent=2))
+
+        diff_corr = diffusion_embedding_correlation(code_emb, diffusion_metric, device)
+        print(f"[HyperMedDiff-Risk] Diffusion/embedding correlation after training: {diff_corr:.4f}")
+
+        ckpt_path = os.path.join(
+            args.output,
+            f"hypermeddiff_risk_{run_tag}.pt",
+        )
+        torch.save(
+            {
+                "velocity_model": velocity_model.state_dict(),
+                "visit_enc": visit_enc.state_dict(),
+                "risk_lstm": risk_lstm.state_dict(),
+                "risk_head": risk_head.state_dict(),
+                "code_emb": code_emb.state_dict(),
+                "lambda_s": config["lambda_s"],
+                "lambda_d": config["lambda_d"],
+                "lambda_consistency": config["lambda_consistency"],
+                "lambda_radius": config["lambda_radius"],
+                "lambda_hdd": config["lambda_hdd"],
+                "dropout": config["dropout"],
+                "train_lr": config["train_lr"],
+                "train_epochs": config["train_epochs"],
+                "best_val_loss": best_val,
+                "pretrain_diff_corr": pre_corr,
+                "post_diff_corr": diff_corr,
+                "risk_metrics": risk_metrics,
+            },
+            ckpt_path,
+        )
+        print(f"Saved checkpoint to {ckpt_path}")
+
+        summary_records.append(
+            {
+                "run_index": run_idx,
+                "run_tag": run_tag,
+                "hyperparameters": copy.deepcopy(config),
+                "best_val_loss": best_val,
+                "risk_metrics": risk_metrics,
+                "plot_path": plot_path,
+                "checkpoint_path": ckpt_path,
+            }
+        )
+
+    print_summary_table(summary_records)
 
 
 if __name__ == "__main__":
