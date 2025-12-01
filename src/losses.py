@@ -51,4 +51,10 @@ def focal_loss(logits, targets, alpha=0.25, gamma=2.0, reduction='mean'):
     bce = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
     pt = torch.exp(-bce)
     focal = alpha * (1 - pt) ** gamma * bce
-    return focal.mean() if reduction == 'mean' else focal.sum()
+    if reduction == 'mean':
+        return focal.mean()
+    if reduction == 'sum':
+        return focal.sum()
+    if reduction == 'none':
+        return focal
+    raise ValueError(f"Unsupported reduction: {reduction}")
