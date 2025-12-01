@@ -18,16 +18,19 @@ from traj_models import TrajectoryVelocityModel
 from regularizers import radius_regularizer
 from losses import focal_loss
 
-BATCH_SIZE = 32         
-TRAIN_LR = 1e-4         
-TRAIN_EPOCHS = 100      
+BATCH_SIZE = 32
+TRAIN_LR = 1e-4
+TRAIN_EPOCHS = 100
 EARLY_STOP_PATIENCE = 5
-EMBED_DIM = 128         
-DROPOUT_RATE = 0.2      
-LAMBDA_RECON = 200.0      
-LAMBDA_RADIUS = 0.003   
-LAMBDA_PAIR = 0.01      
-LAMBDA_HDD = 0.02       
+EMBED_DIM = 128
+DROPOUT_RATE = 0.2
+LAMBDA_RECON = 200.0
+LAMBDA_RADIUS = 0.003
+LAMBDA_PAIR = 0.01
+LAMBDA_HDD = 0.02
+ADAPTIVE_K_SCALE = 0.2
+ADAPTIVE_K_MAX = 256
+ADAPTIVE_RECALL_SCALE = ADAPTIVE_K_SCALE
 
 # DIFFUSION
 DIFFUSION_STEPS = [1, 2, 4, 8]
@@ -355,15 +358,49 @@ def convert_multihot_to_sequences(multihot: torch.Tensor, mask: torch.Tensor):
     return sequences
 
 
-def logits_to_multihot(logits: torch.Tensor, k: int = 64) -> torch.Tensor:
+def collect_visit_code_counts(sequences: Sequence[Sequence[Sequence[int]]], vocab_size: int):
+    counts = []
+    for patient in sequences:
+        for visit in patient:
+            c = sum(1 for code in visit if 0 < code < vocab_size)
+            if c > 0:
+                counts.append(c)
+    return counts
+
+
+class VisitCodeCountSampler:
+    def __init__(self, counts: Sequence[int], scale: float, max_k: int):
+        base_counts = [c for c in counts if c > 0]
+        if not base_counts:
+            base_counts = [1]
+        self.counts = torch.tensor(base_counts, dtype=torch.float32)
+        self.scale = scale
+        self.max_k = max(max_k, 1)
+
+    def sample(self, num_samples: int, device: torch.device) -> torch.Tensor:
+        idx = torch.randint(0, self.counts.size(0), (num_samples,), device=self.counts.device)
+        samples = self.counts[idx]
+        scaled = torch.clamp(
+            torch.round(samples * self.scale).long(),
+            min=1,
+            max=self.max_k,
+        )
+        return scaled.to(device)
+
+
+def logits_to_multihot(logits: torch.Tensor, k_per_visit: torch.Tensor) -> torch.Tensor:
     """
-    Turn logits into a multi-hot with exactly k active codes per non-padded visit
-    (except PAD=0, which we always zero out). Used only for sampling.
+    Turn logits into a multi-hot with an adaptive number of active codes per visit.
+    k_per_visit: [B, L] specifying number of codes to activate per visit (0 for padded visits).
     """
     probs = logits.sigmoid()
-    _, topk_idx = probs.topk(k=k, dim=-1)
+    values, indices = probs.sort(dim=-1, descending=True)
+    vocab = probs.size(-1)
+    ranks = torch.arange(vocab, device=probs.device).view(1, 1, vocab)
+    keep = ranks < k_per_visit.unsqueeze(-1)
+
     multihot = torch.zeros_like(probs)
-    multihot.scatter_(dim=-1, index=topk_idx, src=torch.ones_like(topk_idx, dtype=multihot.dtype))
+    multihot.scatter_(dim=-1, index=indices, src=keep.float())
     multihot[..., 0] = 0  # never predict PAD
     return multihot
 
@@ -376,6 +413,8 @@ def sample_from_flow(
     latent_dim: int,
     steps: int,
     device: torch.device,
+    visit_code_sampler: VisitCodeCountSampler | None = None,
+    default_k: int = 64,
 ):
     B, L = mask_template.shape
     latents = torch.randn(B, L, latent_dim, device=device)
@@ -393,7 +432,16 @@ def sample_from_flow(
         latents = torch.where(mask_expand, latents, torch.zeros_like(latents))
     logits = visit_dec(tangent_proj(latents.view(B * L, -1))).view(B, L, -1)
     logits[..., 0] = -1e9
-    samples = logits_to_multihot(logits, k=64).cpu()
+    if visit_code_sampler is not None:
+        active = visit_mask.view(-1)
+        num_active = int(active.sum().item())
+        sampled_k = visit_code_sampler.sample(num_active, device=device)
+        k_flat = torch.zeros(B * L, device=device, dtype=torch.long)
+        k_flat[active] = sampled_k
+        k_per_visit = k_flat.view(B, L)
+    else:
+        k_per_visit = torch.full((B, L), default_k, device=device, dtype=torch.long)
+    samples = logits_to_multihot(logits, k_per_visit=k_per_visit).cpu()
     return convert_multihot_to_sequences(samples, mask_template.cpu())
 
 
@@ -625,6 +673,60 @@ def evaluate_recall(
     return float(total_correct) / max(total_items, 1)
 
 
+def evaluate_adaptive_metrics(
+    loader,
+    visit_enc,
+    visit_dec,
+    tangent_proj,
+    device,
+    scale: float,
+    max_k: int,
+) -> tuple[float, float]:
+    visit_enc.eval()
+    visit_dec.eval()
+    tangent_proj.eval()
+
+    total_correct = 0
+    total_items = 0
+    jaccard_sum = 0.0
+    num_visits = 0
+
+    with torch.no_grad():
+        for padded_x, _, visit_mask in loader:
+            padded_x = padded_x.to(device)
+            visit_mask = visit_mask.to(device)
+            flat_visits, B, L = flatten_visits_from_multihot(padded_x, visit_mask, pad_idx=0)
+            latents = visit_enc(flat_visits).to(device).view(B, L, -1)
+            logits = visit_dec(tangent_proj(latents.view(B * L, -1))).view(B, L, -1)
+            probs = logits.sigmoid()
+            sorted_idx = probs.argsort(dim=-1, descending=True)
+
+            for b in range(B):
+                for l in range(L):
+                    if visit_mask[b, l] <= 0:
+                        continue
+                    true_codes = torch.nonzero(padded_x[b, l], as_tuple=False).squeeze(-1).tolist()
+                    true_codes = [c for c in true_codes if c > 0]
+                    if not true_codes:
+                        continue
+                    k = int(round(scale * len(true_codes)))
+                    k = max(1, min(k, max_k))
+                    preds = sorted_idx[b, l, :k].tolist()
+                    pred_set = set(int(c) for c in preds)
+                    true_set = set(int(c) for c in true_codes)
+                    total_items += len(true_set)
+                    total_correct += sum(1 for code in true_set if code in pred_set)
+                    inter = len(true_set & pred_set)
+                    union = len(true_set | pred_set)
+                    if union > 0:
+                        jaccard_sum += inter / union
+                        num_visits += 1
+
+    recall = float(total_correct) / max(total_items, 1)
+    jaccard = jaccard_sum / max(num_visits, 1)
+    return recall, jaccard
+
+
 def main():
     parser = argparse.ArgumentParser(description="Rectified Flow on MIMIC HF cohort with hyperbolic embeddings.")
     parser.add_argument("--pkl", type=str, default="data/mimic_hf_cohort.pkl", help="Path to mimic_hf_cohort pickle.")
@@ -653,6 +755,15 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn)
     val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_fn)
     test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_fn)
+
+    train_indices = getattr(train_ds, "indices", range(len(dataset)))
+    train_sequences = (dataset.x[i] for i in train_indices)
+    train_code_counts = collect_visit_code_counts(train_sequences, dataset.vocab_size)
+    visit_code_sampler = VisitCodeCountSampler(
+        train_code_counts,
+        scale=ADAPTIVE_K_SCALE,
+        max_k=min(ADAPTIVE_K_MAX, dataset.vocab_size - 1),
+    )
 
     real_stats = mimic_traj_stats(dataset.x)
     print(f"[Rect-GD] Real trajectory stats: {json.dumps(real_stats, indent=2)}")
@@ -723,6 +834,17 @@ def main():
         test_loader, visit_enc, visit_dec, tangent_proj, device, k=64
     )
     print(f"[Rect-GD] Test Recall@64: {test_recall64:.4f}")
+    adaptive_recall, adaptive_jaccard = evaluate_adaptive_metrics(
+        test_loader,
+        visit_enc,
+        visit_dec,
+        tangent_proj,
+        device,
+        scale=ADAPTIVE_RECALL_SCALE,
+        max_k=ADAPTIVE_K_MAX,
+    )
+    print(f"[Rect-GD] Test Recall@adaptiveK: {adaptive_recall:.4f}")
+    print(f"[Rect-GD] Test visit-level Jaccard: {adaptive_jaccard:.4f}")
 
     diff_corr = diffusion_embedding_correlation(code_emb, diffusion_metric, device)
     print(f"[Rect-GD] Diffusion/embedding correlation after training: {diff_corr:.4f}")
@@ -742,6 +864,8 @@ def main():
         latent_dim,
         steps=64,
         device=device,
+        visit_code_sampler=visit_code_sampler,
+        default_k=64,
     )
     synthetic_stats = mimic_traj_stats(synthetic)
     print(f"[Rect-GD] Synthetic stats: {json.dumps(synthetic_stats, indent=2)}")
@@ -759,6 +883,8 @@ def main():
             "test_recon_focal": test_loss,
             "test_recall@4": test_recall,
             "test_recall@64": test_recall64,
+            "test_recall@adaptiveK": adaptive_recall,
+            "test_visit_jaccard": adaptive_jaccard,
             "pretrain_diff_corr": pre_corr,
             "post_diff_corr": diff_corr,
         },
