@@ -8,6 +8,7 @@ import json
 import numpy as np
 import torch
 import torch.nn as nn
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, random_split
 
 from dataset import MimicDataset, make_pad_collate
@@ -20,7 +21,7 @@ from losses import focal_loss
 BATCH_SIZE = 32         
 TRAIN_LR = 1e-4         
 TRAIN_EPOCHS = 100      
-EARLY_STOP_PATIENCE = 8 
+EARLY_STOP_PATIENCE = 5
 EMBED_DIM = 128         
 DROPOUT_RATE = 0.2      
 LAMBDA_RECON = 200.0      
@@ -385,11 +386,28 @@ def diffusion_embedding_correlation(code_emb, diffusion_metric, device, num_pair
     emb_full = base.weight if isinstance(base, nn.Embedding) else base
     emb = emb_full[: diffusion_metric.num_codes]
     dist = code_emb.manifold.dist(emb[idx_i], emb[idx_j]).squeeze(-1)
-    diff_np = target.cpu().numpy()
-    dist_np = dist.cpu().numpy()
+    diff_np = target.detach().cpu().numpy()
+    dist_np = dist.detach().cpu().numpy()
     if diff_np.std() == 0 or dist_np.std() == 0:
         return 0.0
     return float(np.corrcoef(diff_np, dist_np)[0, 1])
+
+
+def plot_training_curves(train_losses, val_losses, output_path, title):
+    if not train_losses:
+        return
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    epochs = range(1, len(train_losses) + 1)
+    plt.figure(figsize=(8, 5))
+    plt.plot(epochs, train_losses, label="train")
+    plt.plot(epochs, val_losses, label="val")
+    plt.xlabel("Epoch")
+    plt.ylabel("Total loss")
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
 
 
 def run_epoch(
@@ -467,6 +485,8 @@ def train_rectified(
     best_val = float("inf")
     best_state = None
     patience_counter = 0
+    train_history = []
+    val_history = []
 
     for epoch in range(1, TRAIN_EPOCHS + 1):
         train_loss = run_epoch(
@@ -491,6 +511,8 @@ def train_rectified(
         )
 
         scheduler.step()
+        train_history.append(train_loss)
+        val_history.append(val_loss)
         print(f"[Rect-GD] Epoch {epoch:03d} | Train {train_loss:.4f} | Val {val_loss:.4f}")
 
         if val_loss < best_val:
@@ -514,7 +536,7 @@ def train_rectified(
         visit_dec.load_state_dict(best_state["visit_dec"])
         tangent_proj.load_state_dict(best_state["tangent_proj"])
 
-    return best_val
+    return best_val, train_history, val_history
 
 
 def evaluate(loader, velocity_model, visit_enc, visit_dec, tangent_proj, device):
@@ -648,7 +670,7 @@ def main():
     tangent_proj = torch.nn.Linear(latent_dim, EMBED_DIM).to(device)
     velocity_model = TrajectoryVelocityModel(dim=latent_dim, n_layers=6, n_heads=8, ff_dim=1024).to(device)
 
-    best_val = train_rectified(
+    best_val, train_history, val_history = train_rectified(
         train_loader,
         val_loader,
         velocity_model,
@@ -659,6 +681,17 @@ def main():
         lambda_recon=LAMBDA_RECON,
     )
     print(f"[Rect-GD] Best validation total loss: {best_val:.4f}")
+
+    os.makedirs(args.plot_dir, exist_ok=True)
+    plot_name = f"graph_gdrect_best_{best_val:.4f}_mimic.png"
+    plot_path = os.path.join(args.plot_dir, plot_name)
+    plot_title = (
+        "Graph-GD Rectified (MIMIC) | "
+        f"lambda_recon={LAMBDA_RECON} | lambda_radius={LAMBDA_RADIUS} | "
+        f"lambda_hdd={LAMBDA_HDD} | lr={TRAIN_LR} | epochs={TRAIN_EPOCHS}"
+    )
+    plot_training_curves(train_history, val_history, plot_path, plot_title)
+    print(f"[Rect-GD] Saved training curve plot to {plot_path}")
 
     test_loss = evaluate(test_loader, velocity_model, visit_enc, visit_dec, tangent_proj, device)
     print(f"[Rect-GD] Test recon focal: {test_loss:.4f}")

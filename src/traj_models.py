@@ -74,7 +74,17 @@ class TrajectoryVelocityModel(nn.Module):
             nn.Linear(dim, dim)
         )
 
-    def forward(self, x_tangent: torch.Tensor, t: torch.Tensor, visit_mask: torch.Tensor = None):
+        self.history_proj = nn.Linear(dim, dim)
+        self.fusion_beta = nn.Linear(dim * 2, dim)
+        self.fusion_alpha = nn.Linear(dim, 2)
+
+    def forward(
+        self,
+        x_tangent: torch.Tensor,
+        t: torch.Tensor,
+        visit_mask: torch.Tensor = None,
+        history: torch.Tensor | None = None,
+    ):
         """
         x_tangent:   [B, L, dim] or [N, dim]  — tangent vectors at origin
         t:           [B] or [N]              — float time in [0,1]
@@ -92,7 +102,19 @@ class TrajectoryVelocityModel(nn.Module):
         t_emb = self.time_mlp(t.float() * 999 + 1)  # map [0,1] → [1,1000]
         t_emb = t_emb.unsqueeze(1).expand(-1, L, -1)  # [B, L, dim]
 
-        h = x_tangent + t_emb
+        fused = x_tangent
+        if history is not None:
+            if history.dim() == 2:
+                history = history.unsqueeze(1)
+            history_proj = self.history_proj(history.to(x_tangent.dtype))
+            concat = torch.cat([x_tangent, history_proj], dim=-1)
+            fusion_logits = self.fusion_alpha(torch.tanh(self.fusion_beta(concat)))
+            gamma = torch.softmax(fusion_logits, dim=-1)
+            gamma_e = gamma[..., :1]
+            gamma_h = gamma[..., 1:]
+            fused = gamma_e * x_tangent + gamma_h * history_proj
+
+        h = fused + t_emb
 
         # Padding mask: Transformer ignores positions where mask is True
         src_key_padding_mask = None if visit_mask is None else ~visit_mask
