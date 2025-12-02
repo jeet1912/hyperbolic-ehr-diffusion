@@ -96,6 +96,6 @@ def main():
     visualize_graph(graph, inverted_code_map, args.output)
     print(f"Saved graph visualization to {args.output}")
 
-
+#TODO plt.savefig(dpi=300)
 if __name__ == "__main__":
     main()

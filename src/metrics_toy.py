@@ -1,6 +1,13 @@
 import numpy as np
 from collections import Counter
 
+def _safe_mean_std(values):
+    if not values:
+        return 0.0, 0.0
+    arr = np.asarray(values, dtype=float)
+    return float(arr.mean()), float(arr.std())
+
+
 def traj_stats(trajs, hier):
     """
     trajs: list of trajectories
@@ -37,11 +44,15 @@ def traj_stats(trajs, hier):
             majority_root, majority_count = counts.most_common(1)[0]
             root_prefix_matches.append(majority_count / len(roots))
 
+    mean_depth, std_depth = _safe_mean_std(depths)
+    mean_tree, std_tree = _safe_mean_std(tree_dists)
+    mean_root, std_root = _safe_mean_std(root_prefix_matches)
+
     return {
-        "mean_depth": float(np.mean(depths)),
-        "std_depth": float(np.std(depths)),
-        "mean_tree_dist": float(np.mean(tree_dists)),
-        "std_tree_dist": float(np.std(tree_dists)),
-        "mean_root_purity": float(np.mean(root_prefix_matches)),
-        "std_root_purity": float(np.std(root_prefix_matches)),
+        "mean_depth": mean_depth,
+        "std_depth": std_depth,
+        "mean_tree_dist": mean_tree,
+        "std_tree_dist": std_tree,
+        "mean_root_purity": mean_root,
+        "std_root_purity": std_root,
     }
