@@ -32,124 +32,51 @@ LAMBDA_S = 1.0           # weight for synthetic risk loss (MedDiffusion λ_S)
 LAMBDA_D = 1.0           # weight for rectified-flow loss (MedDiffusion λ_D)
 LAMBDA_CONSISTENCY = 0.1 # synthetic/real feature consistency
 
-GRID_DIFFUSION_STEPS = [
-    [1, 2, 4, 8],
-    [1, 2],
-    [1, 2, 4, 8, 16],
-    [1],
-]
-GRID_EMBED_DIM = [64, EMBED_DIM, 256]
-GRID_LAMBDA_HDD = [0.0, LAMBDA_HDD, 0.1]
-GRID_LAMBDA_RADIUS = [0.001, LAMBDA_RADIUS, 0.01]
-GRID_LAMBDA_S = [0.5, LAMBDA_S, 2.0]
-GRID_LAMBDA_D = [LAMBDA_D]
-GRID_LAMBDA_CONSISTENCY = [0.1, LAMBDA_CONSISTENCY, 1.0]
-GRID_TRAIN_LR = [5e-5, TRAIN_LR, 2e-4]
-GRID_DROPOUT = [0.2, 0.3, 0.5]
-GRID_TRAIN_EPOCHS = [TRAIN_EPOCHS]
+BASELINE_CONFIG = {
+    "diffusion_steps": [1, 2, 4, 8],
+    "embed_dim": EMBED_DIM,
+    "lambda_hdd": LAMBDA_HDD,
+    "dropout": DROPOUT_RATE,
+    "train_lr": TRAIN_LR,
+    "lambda_radius": LAMBDA_RADIUS,
+    "lambda_s": LAMBDA_S,
+    "lambda_d": LAMBDA_D,
+    "lambda_consistency": LAMBDA_CONSISTENCY,
+    "train_epochs": TRAIN_EPOCHS,
+}
 
 
-def _format_scalar_value(value):
-    if isinstance(value, float):
-        val_str = f"{value:.6g}"
-    else:
-        val_str = str(value)
-    return val_str.replace("-", "m").replace(".", "p")
+def get_ablation_configs() -> List[Tuple[str, dict]]:
+    """Returns exactly 10 high-value experimental configurations."""
+    experiments: List[Tuple[str, dict]] = []
 
+    def add_exp(name: str, modifications: dict):
+        cfg = copy.deepcopy(BASELINE_CONFIG)
+        cfg.update(modifications)
+        cfg["diffusion_steps"] = copy.deepcopy(cfg["diffusion_steps"])
+        experiments.append((name, cfg))
 
-def _format_value_for_name(value):
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        return "x".join(_format_scalar_value(v) for v in value)
-    return _format_scalar_value(value)
+    # --- 1. BASELINE ---
+    add_exp("01_Baseline", {})
 
+    # --- 2. GEOMETRY (Graph Scope) ---
+    add_exp("02_NoDiffusion", {"diffusion_steps": [1]})
+    add_exp("03_LocalDiff", {"diffusion_steps": [1, 2]})
+    add_exp("04_GlobalDiff", {"diffusion_steps": [1, 2, 4, 8, 16]})
 
-def make_run_tag(config: dict, keys: Sequence[str]) -> str:
-    parts = []
-    for key in keys:
-        val = config[key]
-        parts.append(f"{key}{_format_value_for_name(val)}")
-    return "_".join(parts)
+    # --- 3. STRUCTURE (Hyperbolic Alignment) ---
+    add_exp("05_NoHDD", {"lambda_hdd": 0.0})
+    add_exp("06_StrongHDD", {"lambda_hdd": 0.1})
 
+    # --- 4. REGULARIZATION (Capacity) ---
+    add_exp("07_HighDropout", {"dropout": 0.5})
+    add_exp("08_SmallDim", {"embed_dim": 64})
 
-RUN_TAG_KEYS = [
-    "diffusion_steps",
-    "embed_dim",
-    "lambda_hdd",
-    "dropout",
-    "train_lr",
-    "train_epochs",
-    "lambda_radius",
-    "lambda_s",
-    "lambda_d",
-    "lambda_consistency",
-]
+    # --- 5. MULTI-TASK (Generative Weight) ---
+    add_exp("09_DiscrimOnly", {"lambda_s": 0.0})  # Pure risk model
+    add_exp("10_GenFocus", {"lambda_s": 2.0})  # Stronger generative regularization
 
-
-def _normalize_for_key(value):
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        return tuple(value)
-    return value
-
-
-def _config_key(config: dict):
-    return tuple(sorted((name, _normalize_for_key(value)) for name, value in config.items()))
-
-
-def collect_grid_configs():
-    base_config = {
-        "diffusion_steps": copy.deepcopy(GRID_DIFFUSION_STEPS[0]),
-        "embed_dim": EMBED_DIM,
-        "lambda_hdd": LAMBDA_HDD,
-        "dropout": DROPOUT_RATE,
-        "train_lr": TRAIN_LR,
-        "train_epochs": TRAIN_EPOCHS,
-        "lambda_radius": LAMBDA_RADIUS,
-        "lambda_s": LAMBDA_S,
-        "lambda_d": LAMBDA_D,
-        "lambda_consistency": LAMBDA_CONSISTENCY,
-    }
-
-    configs = []
-    seen = set()
-
-    def add_config(cfg):
-        key = _config_key(cfg)
-        if key in seen:
-            return
-        seen.add(key)
-        configs.append(copy.deepcopy(cfg))
-
-    add_config(base_config)
-
-    # Geometry-focused sweeps
-    for steps in GRID_DIFFUSION_STEPS:
-        for embed_dim in GRID_EMBED_DIM:
-            for lambda_hdd in GRID_LAMBDA_HDD:
-                cfg = base_config.copy()
-                cfg["diffusion_steps"] = copy.deepcopy(steps)
-                cfg["embed_dim"] = embed_dim
-                cfg["lambda_hdd"] = lambda_hdd
-                add_config(cfg)
-
-    # Training dynamics sweeps
-    for dropout in GRID_DROPOUT:
-        for train_lr in GRID_TRAIN_LR:
-            for lambda_radius in GRID_LAMBDA_RADIUS:
-                cfg = base_config.copy()
-                cfg["dropout"] = dropout
-                cfg["train_lr"] = train_lr
-                cfg["lambda_radius"] = lambda_radius
-                add_config(cfg)
-
-    # MedDiffusion-specific sweeps
-    for lambda_s in GRID_LAMBDA_S:
-        for lambda_consistency in GRID_LAMBDA_CONSISTENCY:
-            cfg = base_config.copy()
-            cfg["lambda_s"] = lambda_s
-            cfg["lambda_consistency"] = lambda_consistency
-            add_config(cfg)
-
-    return configs
+    return experiments
 
 
 def print_summary_table(records: List[dict]):
@@ -157,14 +84,14 @@ def print_summary_table(records: List[dict]):
         print("[HyperMedDiff-Risk] No runs to summarize.")
         return
 
-    headers = ["Run", "Tag", "ValLoss", "AUROC", "AUPRC", "Accuracy", "F1"]
+    headers = ["Run", "Experiment", "ValLoss", "AUROC", "AUPRC", "Accuracy", "F1"]
     rows = []
     for rec in records:
         metrics = rec.get("risk_metrics") or {}
         rows.append(
             [
                 str(rec.get("run_index", "")),
-                rec.get("run_tag", ""),
+                rec.get("experiment_name", ""),
                 f"{rec.get('best_val_loss', 0.0):.4f}",
                 f"{metrics.get('auroc', 0.0):.4f}",
                 f"{metrics.get('auprc', 0.0):.4f}",
@@ -183,7 +110,7 @@ def print_summary_table(records: List[dict]):
             cell.ljust(col_widths[idx]) for idx, cell in enumerate(row_vals)
         )
 
-    print("[HyperMedDiff-Risk] ==== Grid Summary ====")
+    print("[HyperMedDiff-Risk] ==== Ablation Summary ====")
     print(format_row(headers))
     print("-+-".join("-" * w for w in col_widths))
     for row in rows:
@@ -1126,12 +1053,22 @@ def main():
     os.makedirs(args.plot_dir, exist_ok=True)
     os.makedirs(args.output, exist_ok=True)
 
-    grid_configs = collect_grid_configs()
-    print(f"[HyperMedDiff-Risk] Running {len(grid_configs)} grid configurations.")
+    experiments_all = get_ablation_configs()
+    experiments = []
+    for name, cfg in experiments_all:
+        if name == "01_Baseline":
+            print("[HyperMedDiff-Risk] Skipping 01_Baseline (already executed separately).")
+            continue
+        experiments.append((name, cfg))
+
+    print(f"[HyperMedDiff-Risk] Running {len(experiments)} ablation configurations.")
     summary_records = []
 
-    for run_idx, config in enumerate(grid_configs, start=1):
-        print(f"[HyperMedDiff-Risk] ===== Grid run {run_idx}/{len(grid_configs)}: {config} =====")
+    for run_idx, (exp_name, config) in enumerate(experiments, start=1):
+        print(
+            f"[HyperMedDiff-Risk] ===== Experiment {run_idx}/{len(experiments)}: {exp_name} ====="
+        )
+        print(json.dumps(config, indent=2))
         diffusion_metric = MimicDiffusionMetric.from_sequences(
             dataset.x,
             vocab_size=dataset.vocab_size,
@@ -1200,10 +1137,9 @@ def main():
         )
         print(f"[HyperMedDiff-Risk] Best validation total loss (run {run_idx}): {best_val:.4f}")
 
-        run_tag = make_run_tag(config, RUN_TAG_KEYS)
-        plot_path = os.path.join(args.plot_dir, f"risk_prediction_mimic_{run_tag}.png")
+        plot_path = os.path.join(args.plot_dir, f"{exp_name}.png")
         plot_title = (
-            "Risk Prediction (MIMIC) | "
+            f"{exp_name} | Risk Prediction (MIMIC) | "
             f"lambda_s={config['lambda_s']} | lambda_d={config['lambda_d']} | "
             f"lambda_consistency={config['lambda_consistency']} | dropout={config['dropout']} | "
             f"lr={config['train_lr']} | epochs={config['train_epochs']} | "
@@ -1221,10 +1157,7 @@ def main():
         diff_corr = diffusion_embedding_correlation(code_emb, diffusion_metric, device)
         print(f"[HyperMedDiff-Risk] Diffusion/embedding correlation after training: {diff_corr:.4f}")
 
-        ckpt_path = os.path.join(
-            args.output,
-            f"hypermeddiff_risk_{run_tag}.pt",
-        )
+        ckpt_path = os.path.join(args.output, f"{exp_name}.pt")
         torch.save(
             {
                 "velocity_model": velocity_model.state_dict(),
@@ -1252,7 +1185,7 @@ def main():
         summary_records.append(
             {
                 "run_index": run_idx,
-                "run_tag": run_tag,
+                "experiment_name": exp_name,
                 "hyperparameters": copy.deepcopy(config),
                 "best_val_loss": best_val,
                 "risk_metrics": risk_metrics,
