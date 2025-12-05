@@ -57,12 +57,5 @@ NOTE: The Contradiction: In MIMIC-III, it is mathematically impossible to get an
 It is highly likely the authors described their intended window (6 months) in the text but actually used a broader window (1 year) when generating the final data and statistics table.
 
 
-# TODO
-## background, motivation
-## problems/tasks to be addressed/challenges/objectives 
-## methodology - diagram, components of architecture and explain connections
-## experiments and results (strong comparisions)
-## future work
-## know your model's weakness 
-## acknowledgement 
+
 
