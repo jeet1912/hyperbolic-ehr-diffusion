@@ -45,15 +45,25 @@ def visualize_graph(G, code_map, out_path: str):
 
     plt.figure(figsize=(14, 10))
     degrees = dict(G.degree())
-    node_sizes = [degrees[node] * 30 for node in G.nodes()]
+    nodes = list(G.nodes())
+    node_sizes = [degrees[node] * 30 for node in nodes]
+    node_colors = [degrees[node] for node in nodes]
     node_labels = {node: code_map.get(node, node) for node in G.nodes()}
 
     pos = nx.spring_layout(G, seed=42, k=0.3)
-    nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color=list(degrees.values()), cmap="viridis")
+    scatter = nx.draw_networkx_nodes(
+        G,
+        pos,
+        nodelist=nodes,
+        node_size=node_sizes,
+        node_color=node_colors,
+        cmap="viridis",
+    )
     nx.draw_networkx_edges(G, pos, alpha=0.3)
     nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=8)
 
-    plt.title("MIMIC Hypergraph: Top ICD9 Code Co-occurrences")
+    cbar = plt.colorbar(scatter, shrink=0.85)
+    cbar.set_label("Node degree (co-occurring codes)", fontsize=12)
     plt.axis("off")
     plt.tight_layout()
     plt.savefig(out_path, dpi=300)
@@ -96,6 +106,5 @@ def main():
     visualize_graph(graph, inverted_code_map, args.output)
     print(f"Saved graph visualization to {args.output}")
 
-#TODO plt.savefig(dpi=300)
 if __name__ == "__main__":
     main()

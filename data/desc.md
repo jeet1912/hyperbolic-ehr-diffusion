@@ -13,7 +13,7 @@ Sequence Length: Patients with fewer than 2 total lifetime visits were excluded,
 
 Index Mortality: Patients who died during their index admission (HOSPITAL_EXPIRE_FLAG = 1) were excluded to ensure the prediction target remains clinically actionable.
 
-Final Positive Count: 2,835 patients.
+Final Positive Count: 2,835 patients (Target: 2820).
 
 2. Control Selection (Negative Cohort)
 
@@ -25,7 +25,7 @@ Age: Matched within a strict ±0 year tolerance (Exact Age).
 
 Longitudinal Density: To avoid matching "heavy" users (high visit count) with "light" users, we enforced a Visit Count constraint. Controls were required to have a total visit count between N and N+4 (where N is the case's visit count). This bias ensures the control group exhibits similar or slightly higher data density, preventing the model from distinguishing classes based solely on sequence length.
 
-Final Negative Count: 4,566 patients.
+Final Negative Count: 4,566 patients (Target: 4702).
 
 3. Feature Representation and Statistics
 

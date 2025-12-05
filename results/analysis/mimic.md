@@ -33,20 +33,22 @@ Model Pipeline
 
 2. **Code embedding pretraining**  
    Hyperbolic embeddings $c_i \in \mathbb{B}^d$ [1] minimize
-   $$
-   \mathcal{L}_{\text{pre}} = \lambda_{\text{radius}} \underbrace{\frac{1}{N}\sum_i(\|c_i\|_{\mathbb{B}}-r^\star)^2}_{\mathcal{L}_{\text{radius}}}
-   + \lambda_{\text{hdd}} \underbrace{\mathbb{E}_{i,j}\left(\|f_i-f_j\|_2 - d_{\mathbb{B}}(c_i,c_j)\right)^2}_{\mathcal{L}_{\text{HDD}}},
-   $$
+   $$\mathcal{L}_{\text{pre}} = \lambda_{\text{radius}} \underbrace{\frac{1}{N}\sum_i(\|c_i\|_{\mathbb{B}}-r^\star)^2}_{\mathcal{L}_{\text{radius}}} + \lambda_{\text{hdd}} \underbrace{\mathbb{E}_{i,j}\left(\|f_i-f_j\|_2 - d_{\mathbb{B}}(c_i,c_j)\right)^2}_{\mathcal{L}_{\text{HDD}}}$$
    where $f_i$ is the diffusion signature from co-occurrence graphs [2]. This stage aligns geometry with graph diffusion before freezing $C$.
 
 3. **Graph-hyperbolic visit encoder**  
-   Kernels $K_s$ propagate $\log_0(C)$ across multiscale neighborhoods; concatenated outputs pass through a projection, Einstein pooling [3], optional global self-attention, and temporal features to yield tangent-space visit vectors $z_{p,t}$.
+   Diffusion kernels $K_s$ define the `HyperbolicGraphDiffusionLayer`,
+   $$
+   Z_s = K_s\,\log_0(C), \qquad Z = \mathrm{Proj}\big[\mathrm{concat}_s Z_s\big],
+   $$
+   ensuring each code receives information from multi-hop neighborhoods before re-entering $\mathbb{R}^d$. For each visit, we aggregate the corresponding rows of 
+H with a simple mean in tangent space, and a stack of `GlobalSelfAttentionBlock`s (multi-head attention, feed-forward layers, LayerNorm) enforces global interactions. Time encodings then shift the tangent vectors, yielding visit representations $z_{p,t}$.
 
 4. **Trajectory velocity model**  
    `TrajectoryVelocityModel` predicts $v_\theta(z_t,t,h_{<t})$ and underpins both rectified-flow losses [4] and flow-based sampling for synthetic trajectories.
 
 5. **Risk encoder and head**  
-   `TemporalLSTMEncoder` outputs contextual states $h_p$; `RiskHead` applies a linear classifier with sigmoid link $\sigma(\hat{y}_p)$.
+   `TemporalLSTMEncoder` is a single-layer LSTM operating on the visit sequence with masking; it returns both per-visit states $h_{p,t}$ and pooled representations $h_p=\mathrm{LSTMPool}(h_{p,1:L})$. These features feed the linear `RiskHead`, which produces logits $\hat{y}_p$ and final probabilities $\sigma(\hat{y}_p)$.
 
 Joint Training Loss
 -------------------
@@ -133,7 +135,6 @@ References
 
 [2] Chami, I., et al. (2019). Hyperbolic Graph Convolutional Neural Networks. Advances in Neural Information Processing Systems.
 
-[3] Ganea, O., et al. (2018). Hyperbolic Neural Networks. Advances in Neural Information Processing Systems.
 
 [4] Liu, X., et al. (2022). Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow. arXiv preprint arXiv:2209.03003.
 
