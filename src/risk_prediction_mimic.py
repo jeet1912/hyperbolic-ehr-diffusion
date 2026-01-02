@@ -1507,7 +1507,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Hyperbolic Graph Diffusion + Rectified Flow + MedDiffusion-style Risk Modeling."
     )
-    parser.add_argument("--pkl", type=str, default="data/mimic_hf_cohort.pkl",
+    parser.add_argument("--pkl", type=str, default="data/mimiciii/mimic_hf_cohort.pkl",
                         help="Path to mimic_hf_cohort pickle.")
     parser.add_argument("--output", type=str, default="results/checkpoints",
                         help="Directory for checkpoints.")

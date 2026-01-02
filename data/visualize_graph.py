@@ -75,7 +75,7 @@ def main():
     parser.add_argument(
         "--pkl",
         type=str,
-        default="data/mimic_hf_cohort.pkl",
+        default="data/mimiciii/mimic_hf_cohort.pkl",
         help="Path to mimic_hf_cohort pickle file",
     )
     parser.add_argument(
