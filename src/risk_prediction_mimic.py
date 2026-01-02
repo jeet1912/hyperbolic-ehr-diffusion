@@ -48,11 +48,14 @@ BASELINE_CONFIG = {
     "lambda_d": LAMBDA_D,
     "lambda_consistency": LAMBDA_CONSISTENCY,
     "train_epochs": TRAIN_EPOCHS,
+    "use_attention": True,
+    "pretrain_code_emb": True,
+    "freeze_code_emb": True,
 }
 
 
 def get_ablation_configs() -> List[Tuple[str, dict]]:
-    """Returns exactly 10 high-value experimental configurations."""
+    """Returns ablation configurations."""
     experiments: List[Tuple[str, dict]] = []
 
     def add_exp(name: str, modifications: dict):
@@ -78,10 +81,67 @@ def get_ablation_configs() -> List[Tuple[str, dict]]:
     add_exp("08_SmallDim", {"embed_dim": 64})
 
     # --- 5. MULTI-TASK (Generative Weight) ---
-    add_exp("09_NoSynthRisk", {"lambda_s": 0.0})  # Pure risk model
+    add_exp("09_NoSynthRisk", {"lambda_s": 0.0})  # No synthetic BCE term
     add_exp("10_GenFocus", {"lambda_s": 2.0, "lambda_d": 2.0})  # Stronger generative regularization
 
+    # --- 6. Attention stack ---
+    # Requires your model to read cfg["use_attention"] and bypass the self-attention block if False.
+    add_exp("11_NoAttention", {"use_attention": False})
+
+    # --- 7. Consistency coupling ---
+    add_exp("12_NoConsistency", {"lambda_consistency": 0.0})
+
+    # --- 8. Flow / rectified-flow module ---
+    # Flow matching off; synthetic branch is skipped when lambda_d == 0.
+    add_exp("13_NoFlow", {"lambda_d": 0.0})
+
+    # --- 9. Truly discriminative-only (real risk only) ---
+    # Removes ALL synthetic/generative couplings.
+    add_exp("14_RealOnlyRisk", {"lambda_s": 0.0, "lambda_d": 0.0, "lambda_consistency": 0.0})
+
+    # --- 10. Pretraining protocol toggles ---
+    #  - "pretrain_code_emb": if False, skip code pretraining and initialize randomly.
+    add_exp("15_NoPretrain_RandomInit", {"pretrain_code_emb": False, "lambda_radius": 0.0, "lambda_hdd": 0.0})
+    #  - "freeze_code_emb": if False, allow embedding fine-tuning during downstream training.
+    add_exp("16_UnfreezeEmbeddings", {"freeze_code_emb": False})
+    
+    # --- 11. isolate HDD vs radius pretraining components ---
+    add_exp("17_Pretrain_RadiusOnly", {"lambda_hdd": 0.0})      # keep radius reg
+    add_exp("18_Pretrain_HDDOnly", {"lambda_radius": 0.0})     # keep HDD alignment
+
     return experiments
+
+
+def aggregate_distortion_stats(distortion_by_depth):
+    """
+    Weighted aggregation over depths.
+    Returns (mean_ratio, std_ratio) or (None, None) if missing.
+    """
+    if not distortion_by_depth:
+        return None, None
+
+    total = 0
+    mean_acc = 0.0
+    var_acc = 0.0
+
+    for entry in distortion_by_depth:
+        count = entry.get("count", 0)
+        if count <= 0:
+            continue
+        mean = entry.get("mean_ratio", 0.0)
+        std = entry.get("std_ratio", 0.0)
+
+        total += count
+        mean_acc += count * mean
+        var_acc += count * (std ** 2 + mean ** 2)
+
+    if total == 0:
+        return None, None
+
+    mean = mean_acc / total
+    var = var_acc / total - mean ** 2
+    std = np.sqrt(max(var, 0.0))
+    return float(mean), float(std)
 
 
 def print_summary_table(records: List[dict]):
@@ -89,7 +149,19 @@ def print_summary_table(records: List[dict]):
         print("[HyperMedDiff-Risk] No runs to summarize.")
         return
 
-    headers = ["Run", "Experiment", "ValLoss", "AUROC", "AUPRC", "Accuracy", "F1"]
+    headers = [
+        "Run", "Experiment", "ValLoss", "AUROC", "AUPRC", "Accuracy", "F1",
+        "Diff–Lat ρ", "Tree–Lat ρ", "Dist μ", "Dist σ"
+    ]
+
+    def fmt(x, nd=4):
+        if x is None:
+            return "N/A"
+        try:
+            return f"{float(x):.{nd}f}"
+        except Exception:
+            return "N/A"
+
     rows = []
     for rec in records:
         metrics = rec.get("risk_metrics") or {}
@@ -97,23 +169,25 @@ def print_summary_table(records: List[dict]):
             [
                 str(rec.get("run_index", "")),
                 rec.get("experiment_name", ""),
-                f"{rec.get('best_val_loss', 0.0):.4f}",
-                f"{metrics.get('auroc', 0.0):.4f}",
-                f"{metrics.get('auprc', 0.0):.4f}",
-                f"{metrics.get('accuracy', 0.0):.4f}",
-                f"{metrics.get('f1', 0.0):.4f}",
+                fmt(rec.get("best_val_loss", 0.0)),
+                fmt(metrics.get("auroc", 0.0)),
+                fmt(metrics.get("auprc", 0.0)),
+                fmt(metrics.get("accuracy", 0.0)),
+                fmt(metrics.get("f1", 0.0)),
+                fmt(rec.get("diffusion_latent_spearman")),
+                fmt(rec.get("tree_latent_spearman")),
+                fmt(rec.get("distortion_depth_mean")),
+                fmt(rec.get("distortion_depth_std")),
             ]
         )
 
-    col_widths = [len(header) for header in headers]
+    col_widths = [len(h) for h in headers]
     for row in rows:
-        for idx, cell in enumerate(row):
-            col_widths[idx] = max(col_widths[idx], len(cell))
+        for i, cell in enumerate(row):
+            col_widths[i] = max(col_widths[i], len(cell))
 
-    def format_row(row_vals):
-        return " | ".join(
-            cell.ljust(col_widths[idx]) for idx, cell in enumerate(row_vals)
-        )
+    def format_row(vals):
+        return " | ".join(vals[i].ljust(col_widths[i]) for i in range(len(vals)))
 
     print("[HyperMedDiff-Risk] ==== Ablation Summary ====")
     print(format_row(headers))
@@ -139,6 +213,30 @@ def collect_unique_params(*modules):
     return params
 
 
+def get_corr_pairs(
+    num_pairs: int,
+    path: str,
+    valid_indices: Sequence[int],
+    seed: int = 42,
+) -> torch.Tensor:
+    if os.path.exists(path):
+        pairs = np.load(path)
+        if pairs.ndim == 2 and pairs.shape[1] == 2:
+            return torch.from_numpy(pairs).long()
+    rng = np.random.default_rng(seed)
+    choices = np.array(valid_indices, dtype=np.int64)
+    if choices.size == 0 or num_pairs <= 0:
+        return torch.empty((0, 2), dtype=torch.long)
+    idx_i = rng.choice(choices, size=num_pairs, replace=True)
+    idx_j = rng.choice(choices, size=num_pairs, replace=True)
+    pairs = np.stack([idx_i, idx_j], axis=1)
+    dirpath = os.path.dirname(path)
+    if dirpath:
+        os.makedirs(dirpath, exist_ok=True)
+    np.save(path, pairs)
+    return torch.from_numpy(pairs).long()
+
+
 def build_diffusion_kernels_from_sequences(
     sequences, vocab_size: int, steps: List[int], device: torch.device
 ):
@@ -160,6 +258,8 @@ def build_diffusion_kernels_from_sequences(
 
     kernels = []
     steps_sorted = sorted(set(steps))
+    if not steps_sorted:
+        raise ValueError("diffusion_steps must be non-empty (e.g., [1])")
     current = row_norm.clone()
     max_step = steps_sorted[-1]
     for step in range(1, max_step + 1):
@@ -215,13 +315,14 @@ class GlobalSelfAttentionBlock(nn.Module):
         """
         x: [B, L, D] or [L, D]; returns same shape.
         """
-        if x.dim() == 2:
+        orig_2d = x.dim() == 2
+        if orig_2d:
             x = x.unsqueeze(0)
         attn_out, _ = self.attn(x, x, x)
         x = self.norm1(x + self.dropout(attn_out))
         ff_out = self.ff(x)
         x = self.norm2(x + self.dropout(ff_out))
-        return x.squeeze(0)
+        return x.squeeze(0) if orig_2d else x
 
 
 class GraphHyperbolicVisitEncoderGlobal(nn.Module):
@@ -240,6 +341,7 @@ class GraphHyperbolicVisitEncoderGlobal(nn.Module):
         num_heads: int = 4,
         ff_dim: int = 128,
         dropout: float = 0.0,
+        use_attention: bool = True,
     ):
         super().__init__()
         self.code_emb = code_emb
@@ -257,17 +359,20 @@ class GraphHyperbolicVisitEncoderGlobal(nn.Module):
             diffusion_kernels=diffusion_kernels,
         )
 
-        self.attn_layers = nn.ModuleList(
-            [
-                GlobalSelfAttentionBlock(
-                    dim=self.dim,
-                    num_heads=num_heads,
-                    ff_dim=ff_dim,
-                    dropout=dropout,
-                )
-                for _ in range(num_attn_layers)
-            ]
-        )
+        if use_attention and num_attn_layers > 0:
+            self.attn_layers = nn.ModuleList(
+                [
+                    GlobalSelfAttentionBlock(
+                        dim=self.dim,
+                        num_heads=num_heads,
+                        ff_dim=ff_dim,
+                        dropout=dropout,
+                    )
+                    for _ in range(num_attn_layers)
+                ]
+            )
+        else:
+            self.attn_layers = nn.ModuleList([])
 
         self.output_dim = self.dim
         self.time_freq = nn.Linear(1, self.dim)
@@ -346,20 +451,36 @@ class MimicDiffusionMetric:
                         c1, c2 = visit_codes[i], visit_codes[j]
                         adj[c1, c2] += 1.0
                         adj[c2, c1] += 1.0
+        adj = adj + torch.eye(vocab_size, device=device)
         deg = adj.sum(dim=1).clamp_min(1.0)
         A_norm = adj / deg.unsqueeze(1)
-        eye = torch.eye(vocab_size, device=device)
         features = []
-        current = eye
-        for _ in steps:
-            current = torch.matmul(A_norm, current)
-            features.append(current)
+        steps_sorted = sorted(set(steps))
+        if not steps_sorted:
+            return cls(torch.zeros(vocab_size, 0, device=device))
+        current = A_norm.clone()
+        max_step = steps_sorted[-1]
+        for step in range(1, max_step + 1):
+            if step == 1:
+                current = A_norm.clone()
+            else:
+                current = torch.matmul(A_norm, current)
+            if step in steps_sorted:
+                features.append(current)
         profile = torch.cat(features, dim=-1)   # [V, len(steps)*V]
         return cls(profile)
 
-    def embedding_loss(self, code_emb, device, num_pairs=1024):
-        idx_i = torch.randint(0, self.num_codes, (num_pairs,), device=device)
-        idx_j = torch.randint(0, self.num_codes, (num_pairs,), device=device)
+    def embedding_loss(self, code_emb, device, num_pairs=1024, valid_indices: Sequence[int] | None = None):
+        if valid_indices is None:
+            idx_i = torch.randint(0, self.num_codes, (num_pairs,), device=device)
+            idx_j = torch.randint(0, self.num_codes, (num_pairs,), device=device)
+        else:
+            idx_choices = torch.tensor(valid_indices, device=device, dtype=torch.long)
+            if idx_choices.numel() == 0:
+                return torch.tensor(0.0, device=device)
+            choice_count = idx_choices.numel()
+            idx_i = idx_choices[torch.randint(0, choice_count, (num_pairs,), device=device)]
+            idx_j = idx_choices[torch.randint(0, choice_count, (num_pairs,), device=device)]
         diff = self.profile[idx_i] - self.profile[idx_j]
         target = torch.norm(diff, dim=-1)
 
@@ -378,6 +499,7 @@ def pretrain_code_embedding(
     diffusion_metric: MimicDiffusionMetric,
     lambda_radius: float = LAMBDA_RADIUS,
     lambda_hdd: float = LAMBDA_HDD,
+    valid_indices: Sequence[int] | None = None,
 ):
     """
     Pretrain HyperbolicCodeEmbedding with radius + HDD-style loss (no labels).
@@ -391,7 +513,9 @@ def pretrain_code_embedding(
     for epoch in range(1, 1 + 30):
         code_emb.train()
         loss_rad = radius_regularizer(code_emb)
-        loss_hdd = diffusion_metric.embedding_loss(code_emb, device=device, num_pairs=2048)
+        loss_hdd = diffusion_metric.embedding_loss(
+            code_emb, device=device, num_pairs=2048, valid_indices=valid_indices
+        )
         loss = lambda_radius * loss_rad + lambda_hdd * loss_hdd
         optimizer.zero_grad()
         loss.backward()
@@ -400,7 +524,9 @@ def pretrain_code_embedding(
         with torch.no_grad():
             code_emb.eval()
             val_rad = radius_regularizer(code_emb)
-            val_hdd = diffusion_metric.embedding_loss(code_emb, device=device, num_pairs=2048)
+            val_hdd = diffusion_metric.embedding_loss(
+                code_emb, device=device, num_pairs=2048, valid_indices=valid_indices
+            )
             val_loss = lambda_radius * val_rad + lambda_hdd * val_hdd
 
         print(f"[Pretrain] Epoch {epoch:02d} | train={loss.item():.4f} | val={val_loss.item():.4f}")
@@ -573,25 +699,49 @@ def sample_latents_from_flow(
     return latents
 
 
-def diffusion_embedding_correlation(code_emb, diffusion_metric, device, num_pairs=5000):
+def diffusion_embedding_faithfulness(
+    code_emb,
+    diffusion_metric,
+    pairs: torch.Tensor,
+) -> float:
     """
     Correlation between diffusion-profile distances and hyperbolic distances
-    (HDD-like alignment score).
+    over a fixed set of code pairs.
     """
-    idx_i = torch.randint(0, diffusion_metric.num_codes, (num_pairs,), device=device)
-    idx_j = torch.randint(0, diffusion_metric.num_codes, (num_pairs,), device=device)
-    diff = diffusion_metric.profile[idx_i] - diffusion_metric.profile[idx_j]
-    target = torch.norm(diff, dim=-1)
-
+    if pairs.numel() == 0:
+        return 0.0
+    code_emb.eval()
     base = code_emb.emb
     emb_full = base.weight if isinstance(base, nn.Embedding) else base
-    emb = emb_full[: diffusion_metric.num_codes]
-    dist = code_emb.manifold.dist(emb[idx_i], emb[idx_j]).squeeze(-1)
-    diff_np = target.detach().cpu().numpy()
-    dist_np = dist.detach().cpu().numpy()
+    device = emb_full.device
+    with torch.no_grad():
+        idx_i = pairs[:, 0].to(device=device)
+        idx_j = pairs[:, 1].to(device=device)
+        profile = diffusion_metric.profile.to(device=device, dtype=torch.float32)
+        emb = emb_full.to(device=device, dtype=torch.float32)[: diffusion_metric.num_codes]
+        diff = profile[idx_i] - profile[idx_j]
+        target = torch.norm(diff, dim=-1)
+        dist = code_emb.manifold.dist(emb[idx_i], emb[idx_j]).squeeze(-1)
+        diff_np = target.detach().cpu().numpy()
+        dist_np = dist.detach().cpu().numpy()
     if diff_np.std() == 0 or dist_np.std() == 0:
         return 0.0
     return float(np.corrcoef(diff_np, dist_np)[0, 1])
+
+
+def diffusion_embedding_faithfulness_stats(
+    code_emb,
+    diffusion_metric,
+    pair_sets: Sequence[torch.Tensor],
+):
+    values = [
+        diffusion_embedding_faithfulness(code_emb, diffusion_metric, pairs)
+        for pairs in pair_sets
+    ]
+    if not values:
+        return 0.0, 0.0, []
+    arr = np.array(values, dtype=np.float64)
+    return float(arr.mean()), float(arr.std()), [float(v) for v in values]
 
 
 ROOT_CODE = "__ROOT__"
@@ -731,10 +881,12 @@ def sample_tree_latent_pairs(
 ):
     if not idx_to_code:
         return None, None, None
-    max_idx = max(idx_to_code.keys())
     rng = np.random.default_rng(seed)
-    idx_i = rng.integers(1, max_idx + 1, size=num_pairs)
-    idx_j = rng.integers(1, max_idx + 1, size=num_pairs)
+    valid_indices = np.array(sorted(idx_to_code.keys()), dtype=np.int64)
+    if valid_indices.size == 0:
+        return None, None, None
+    idx_i = rng.choice(valid_indices, size=num_pairs, replace=True)
+    idx_j = rng.choice(valid_indices, size=num_pairs, replace=True)
 
     tree_dists = []
     lca_depths = []
@@ -782,10 +934,18 @@ def diffusion_embedding_spearman(
     device: torch.device,
     num_pairs: int,
     seed: int,
+    valid_indices: Sequence[int] | None = None,
 ):
     rng = np.random.default_rng(seed)
-    idx_i = rng.integers(1, diffusion_metric.num_codes, size=num_pairs)
-    idx_j = rng.integers(1, diffusion_metric.num_codes, size=num_pairs)
+    if valid_indices is None:
+        idx_i = rng.integers(0, diffusion_metric.num_codes, size=num_pairs)
+        idx_j = rng.integers(0, diffusion_metric.num_codes, size=num_pairs)
+    else:
+        choices = np.array(valid_indices, dtype=np.int64)
+        if choices.size == 0:
+            return 0.0
+        idx_i = rng.choice(choices, size=num_pairs, replace=True)
+        idx_j = rng.choice(choices, size=num_pairs, replace=True)
     idx_i_t = torch.tensor(idx_i, device=device, dtype=torch.long)
     idx_j_t = torch.tensor(idx_j, device=device, dtype=torch.long)
 
@@ -1106,6 +1266,8 @@ def run_epoch(
     lambda_consistency,
     synthetic_steps: int = 10,
     optimizer=None,
+    code_emb=None,
+    check_code_emb_grad: bool = False,
 ):
     """
     Single epoch of MedDiffusion-style training:
@@ -1121,6 +1283,11 @@ def run_epoch(
 
     trainable_params = collect_unique_params(*modules)
     bce = nn.BCEWithLogitsLoss()
+    effective_lambda_s = lambda_s
+    effective_lambda_consistency = lambda_consistency
+    if lambda_d == 0:
+        effective_lambda_s = 0.0
+        effective_lambda_consistency = 0.0
 
     total_loss = 0.0
     total_samples = 0
@@ -1140,41 +1307,57 @@ def run_epoch(
             )
             latents = visit_enc(flat_visits, flat_deltas).to(device).view(B, L, -1)  # [B, L, D]
 
-            # Rectified flow loss in hyperbolic space
-            reps_real, h_seq = risk_lstm(latents, visit_mask_bool, return_sequence=True)
-            history_context = build_history_context(h_seq, visit_mask_bool)
-            flow_loss = rectified_flow_loss_hyperbolic(
-                velocity_model,
-                latents,
-                visit_mask_bool,
-                visit_enc.manifold,
-                history=history_context,
-            )
+            if lambda_d > 0:
+                reps_real, h_seq = risk_lstm(latents, visit_mask_bool, return_sequence=True)
+                history_context = build_history_context(h_seq, visit_mask_bool)
+                flow_loss = rectified_flow_loss_hyperbolic(
+                    velocity_model,
+                    latents,
+                    visit_mask_bool,
+                    visit_enc.manifold,
+                    history=history_context,
+                )
+            else:
+                reps_real = risk_lstm(latents, visit_mask_bool, return_sequence=False)
+                flow_loss = latents.new_tensor(0.0)
 
             # Risk on REAL trajectories
             logits_real = risk_head(reps_real)                 # [B]
             loss_real = bce(logits_real, labels)
 
-            # Risk on SYNTHETIC trajectories (flow-generated latents)
-            with torch.no_grad():
-                latents_synth = sample_latents_from_flow(
-                    velocity_model,
-                    risk_lstm,
-                    visit_mask_bool,
-                    latent_dim=latents.size(-1),
-                    steps=synthetic_steps,
-                    device=device,
-                )
-            h_synth = risk_lstm(latents_synth, visit_mask_bool)
-            logits_synth = risk_head(h_synth)
-            loss_synth = bce(logits_synth, labels)
-
-            loss_consistency = F.mse_loss(reps_real, h_synth.detach()) * lambda_consistency
-            loss = loss_real + lambda_s * loss_synth + lambda_d * flow_loss + loss_consistency
+            loss_synth = latents.new_tensor(0.0)
+            loss_consistency = latents.new_tensor(0.0)
+            if effective_lambda_s > 0 or effective_lambda_consistency > 0:
+                with torch.no_grad():
+                    latents_synth = sample_latents_from_flow(
+                        velocity_model,
+                        risk_lstm,
+                        visit_mask_bool,
+                        latent_dim=latents.size(-1),
+                        steps=synthetic_steps,
+                        device=device,
+                    )
+                h_synth = risk_lstm(latents_synth, visit_mask_bool)
+                if effective_lambda_s > 0:
+                    logits_synth = risk_head(h_synth)
+                    loss_synth = bce(logits_synth, labels)
+                if effective_lambda_consistency > 0:
+                    loss_consistency = (
+                        F.mse_loss(reps_real, h_synth.detach()) * effective_lambda_consistency
+                    )
+            loss = (
+                loss_real
+                + effective_lambda_s * loss_synth
+                + lambda_d * flow_loss
+                + loss_consistency
+            )
 
             if is_training:
                 optimizer.zero_grad()
                 loss.backward()
+                if check_code_emb_grad and code_emb is not None:
+                    if any(p.grad is not None for p in code_emb.parameters()):
+                        raise RuntimeError("code_emb got gradients despite freezing.")
                 torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
                 optimizer.step()
 
@@ -1198,6 +1381,8 @@ def train_risk_model(
     train_lr,
     train_epochs,
     early_stop_patience,
+    code_emb=None,
+    check_code_emb_grad: bool = False,
 ):
     optimizer = torch.optim.AdamW(
         collect_unique_params(velocity_model, visit_enc, risk_lstm, risk_head),
@@ -1225,6 +1410,8 @@ def train_risk_model(
             lambda_consistency=lambda_consistency,
             synthetic_steps=10,
             optimizer=optimizer,
+            code_emb=code_emb,
+            check_code_emb_grad=check_code_emb_grad,
         )
         val_loss = run_epoch(
             val_loader,
@@ -1238,6 +1425,8 @@ def train_risk_model(
             lambda_consistency=lambda_consistency,
             synthetic_steps=10,
             optimizer=None,
+            code_emb=code_emb,
+            check_code_emb_grad=check_code_emb_grad,
         )
 
         scheduler.step()
@@ -1369,8 +1558,22 @@ def main():
     real_stats = mimic_traj_stats(dataset.x)
     print(f"[HyperMedDiff-Risk] Real trajectory stats: {json.dumps(real_stats, indent=2)}")
 
-    idx_to_code = {idx: code for code, idx in dataset.code_map.items()}
-    codes = list(dataset.code_map.keys())
+    idx_to_code = {idx: code for code, idx in dataset.code_map.items() if idx != 0}
+    valid_code_indices = sorted(idx_to_code.keys())
+    codes = list(idx_to_code.values())
+    corr_cache_dir = os.path.join("results", "cache")
+    corr_seeds = [41, 42, 43, 44, 45]
+    corr_pair_sets = []
+    corr_pair_paths = []
+    for seed in corr_seeds:
+        filename = (
+            f"mimic_corr_pairs_{args.metric_pairs}_seed{seed}_n{len(valid_code_indices)}.npy"
+        )
+        path = os.path.join(corr_cache_dir, filename)
+        corr_pair_sets.append(
+            get_corr_pairs(args.metric_pairs, path, valid_code_indices, seed=seed)
+        )
+        corr_pair_paths.append(path)
     tree_source = "prefix"
     if args.icd_tree:
         try:
@@ -1423,23 +1626,43 @@ def main():
             config["diffusion_steps"],
             device,
         )
+        pretrain_code_emb = config.get("pretrain_code_emb", True)
+        if pretrain_code_emb:
+            code_emb = pretrain_code_embedding(
+                dataset.x,
+                dataset.vocab_size,
+                config["embed_dim"],
+                device,
+                diffusion_metric,
+                lambda_radius=config["lambda_radius"],
+                lambda_hdd=config["lambda_hdd"],
+                valid_indices=valid_code_indices,
+            )
+            print("[HyperMedDiff-Risk] Code embedding pretraining enabled.")
+        else:
+            code_emb = HyperbolicCodeEmbedding(
+                num_codes=dataset.vocab_size, dim=config["embed_dim"]
+            ).to(device)
+            print("[HyperMedDiff-Risk] Code embedding pretraining disabled (random init).")
 
-        code_emb = pretrain_code_embedding(
-            dataset.x,
-            dataset.vocab_size,
-            config["embed_dim"],
-            device,
+        freeze_code_emb = config.get("freeze_code_emb", True)
+        faithfulness_prefix = "Frozen-code" if freeze_code_emb else "Code"
+        pre_faith_mean, pre_faith_std, pre_faith_values = diffusion_embedding_faithfulness_stats(
+            code_emb,
             diffusion_metric,
-            lambda_radius=config["lambda_radius"],
-            lambda_hdd=config["lambda_hdd"],
+            corr_pair_sets,
         )
-        pre_corr = diffusion_embedding_correlation(
-            code_emb, diffusion_metric, device, num_pairs=args.metric_pairs
+        print(
+            f"[HyperMedDiff-Risk] {faithfulness_prefix} diffusion faithfulness "
+            f"(post-pretrain eval): {pre_faith_mean:.4f} ± {pre_faith_std:.4f}"
         )
-        print(f"[HyperMedDiff-Risk] Diffusion/embedding correlation after pretraining: {pre_corr:.4f}")
-
-        for p in code_emb.parameters():
-            p.requires_grad = False
+        if freeze_code_emb:
+            for p in code_emb.parameters():
+                p.requires_grad = False
+            assert all(not p.requires_grad for p in code_emb.parameters())
+        base = code_emb.emb
+        weight = base.weight if isinstance(base, nn.Embedding) else base
+        print(f"[Check] code_emb.requires_grad = {weight.requires_grad}")
 
         visit_enc = GraphHyperbolicVisitEncoderGlobal(
             code_emb,
@@ -1449,6 +1672,7 @@ def main():
             num_heads=4,
             ff_dim=256,
             dropout=config["dropout"],
+            use_attention=config.get("use_attention", True),
         ).to(device)
         latent_dim = visit_enc.output_dim
 
@@ -1478,6 +1702,8 @@ def main():
             train_lr=config["train_lr"],
             train_epochs=int(config["train_epochs"]),
             early_stop_patience=EARLY_STOP_PATIENCE,
+            code_emb=code_emb,
+            check_code_emb_grad=freeze_code_emb,
         )
         print(f"[HyperMedDiff-Risk] Best validation total loss (run {run_idx}): {best_val:.4f}")
 
@@ -1498,10 +1724,15 @@ def main():
         print("[HyperMedDiff-Risk] Test risk metrics (MedDiffusion-style):")
         print(json.dumps(risk_metrics, indent=2))
 
-        diff_corr = diffusion_embedding_correlation(
-            code_emb, diffusion_metric, device, num_pairs=args.metric_pairs
+        post_faith_mean, post_faith_std, post_faith_values = diffusion_embedding_faithfulness_stats(
+            code_emb,
+            diffusion_metric,
+            corr_pair_sets,
         )
-        print(f"[HyperMedDiff-Risk] Diffusion/embedding correlation after training: {diff_corr:.4f}")
+        print(
+            f"[HyperMedDiff-Risk] {faithfulness_prefix} diffusion faithfulness "
+            f"(post-train eval): {post_faith_mean:.4f} ± {post_faith_std:.4f}"
+        )
 
         diff_spearman = diffusion_embedding_spearman(
             code_emb,
@@ -1509,6 +1740,7 @@ def main():
             device,
             num_pairs=args.metric_pairs,
             seed=args.metric_seed,
+            valid_indices=valid_code_indices,
         )
         print(f"[HyperMedDiff-Risk] Diffusion/embedding Spearman rho: {diff_spearman:.4f}")
 
@@ -1525,11 +1757,16 @@ def main():
             seed=args.metric_seed,
         )
         if tree_dists is not None:
+            tree_label = "prefix-tree" if tree_source == "prefix" else tree_source
             tree_spearman = spearman_corr(tree_dists, latent_dists)
-            print(f"[HyperMedDiff-Risk] Tree/embedding Spearman rho: {tree_spearman:.4f}")
+            print(
+                f"[HyperMedDiff-Risk] Tree/embedding Spearman rho ({tree_label}): {tree_spearman:.4f}"
+            )
             distortion_stats = distortion_stats_by_depth(tree_dists, latent_dists, lca_depths)
             distortion_path = os.path.join(args.plot_dir, f"{exp_name}_distortion_depth.png")
-            distortion_title = f"MIMICIII | {exp_name} | Distortion vs LCA Depth"
+            distortion_title = (
+                f"MIMICIII | {exp_name} | Distortion vs LCA Depth | tree={tree_label}"
+            )
             if plot_distortion_vs_depth(distortion_stats, distortion_path, distortion_title):
                 print(f"[HyperMedDiff-Risk] Saved distortion vs depth plot to {distortion_path}")
         else:
@@ -1575,8 +1812,14 @@ def main():
                 "train_lr": config["train_lr"],
                 "train_epochs": config["train_epochs"],
                 "best_val_loss": best_val,
-                "pretrain_diff_corr": pre_corr,
-                "post_diff_corr": diff_corr,
+                "pretrain_diffusion_faithfulness_mean": pre_faith_mean,
+                "pretrain_diffusion_faithfulness_std": pre_faith_std,
+                "pretrain_diffusion_faithfulness_values": pre_faith_values,
+                "posttrain_diffusion_faithfulness_mean": post_faith_mean,
+                "posttrain_diffusion_faithfulness_std": post_faith_std,
+                "posttrain_diffusion_faithfulness_values": post_faith_values,
+                "diffusion_faithfulness_pair_seeds": corr_seeds,
+                "diffusion_faithfulness_pair_paths": corr_pair_paths,
                 "diffusion_latent_spearman": diff_spearman,
                 "tree_latent_spearman": tree_spearman,
                 "distortion_by_depth": distortion_stats,
@@ -1590,6 +1833,7 @@ def main():
         )
         print(f"Saved checkpoint to {ckpt_path}")
 
+        dist_mean, dist_std = aggregate_distortion_stats(distortion_stats)
         summary_records.append(
             {
                 "run_index": run_idx,
@@ -1597,10 +1841,13 @@ def main():
                 "hyperparameters": copy.deepcopy(config),
                 "best_val_loss": best_val,
                 "risk_metrics": risk_metrics,
-                "tree_latent_spearman": tree_spearman,
+                # Faithfulness metrics
                 "diffusion_latent_spearman": diff_spearman,
-                "distortion_plot_path": distortion_path,
+                "tree_latent_spearman": tree_spearman,
+                "distortion_depth_mean": dist_mean,
+                "distortion_depth_std": dist_std,
                 "plot_path": plot_path,
+                "distortion_plot_path": distortion_path,
                 "checkpoint_path": ckpt_path,
             }
         )
