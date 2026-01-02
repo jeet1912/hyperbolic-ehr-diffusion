@@ -2,7 +2,8 @@ import argparse
 import copy
 import json
 import os
-from typing import List, Sequence, Tuple
+from collections import defaultdict
+from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -79,7 +80,6 @@ def get_ablation_configs() -> List[Tuple[str, dict]]:
     # --- 5. MULTI-TASK (Generative Weight) ---
     add_exp("09_NoSynthRisk", {"lambda_s": 0.0})  # Pure risk model
     add_exp("10_GenFocus", {"lambda_s": 2.0, "lambda_d": 2.0})  # Stronger generative regularization
-    add_exp("")
 
     return experiments
 
@@ -594,6 +594,239 @@ def diffusion_embedding_correlation(code_emb, diffusion_metric, device, num_pair
     return float(np.corrcoef(diff_np, dist_np)[0, 1])
 
 
+ROOT_CODE = "__ROOT__"
+
+
+def _rankdata(values: np.ndarray) -> np.ndarray:
+    order = np.argsort(values)
+    ranks = np.empty_like(order, dtype=np.float64)
+    n = len(values)
+    i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and values[order[j + 1]] == values[order[i]]:
+            j += 1
+        avg_rank = 0.5 * (i + j) + 1.0
+        for k in range(i, j + 1):
+            ranks[order[k]] = avg_rank
+        i = j + 1
+    return ranks
+
+
+def spearman_corr(x: np.ndarray, y: np.ndarray) -> float:
+    if x.size == 0 or y.size == 0:
+        return 0.0
+    rx = _rankdata(x)
+    ry = _rankdata(y)
+    if rx.std() == 0 or ry.std() == 0:
+        return 0.0
+    return float(np.corrcoef(rx, ry)[0, 1])
+
+
+def load_icd_parent_map(tree_path: str) -> Dict[str, str]:
+    with open(tree_path, "r") as f:
+        raw = f.read().strip()
+    if not raw:
+        return {}
+    if raw.startswith("{") or raw.startswith("["):
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return {str(child): str(parent) for child, parent in data.items()}
+        if isinstance(data, list):
+            parent_map: Dict[str, str] = {}
+            for item in data:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    child, parent = item[0], item[1]
+                    parent_map[str(child)] = str(parent)
+            return parent_map
+        return {}
+
+    parent_map: Dict[str, str] = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [p.strip() for p in line.split(",")] if "," in line else line.split()
+        if len(parts) < 2:
+            continue
+        child, parent = parts[0], parts[1]
+        parent_map[str(child)] = str(parent)
+    return parent_map
+
+
+def save_icd_parent_map(parent_map: Dict[str, str], output_path: str) -> None:
+    if not output_path:
+        return
+    dirpath = os.path.dirname(output_path)
+    if dirpath:
+        os.makedirs(dirpath, exist_ok=True)
+    with open(output_path, "w") as f:
+        for child in sorted(parent_map.keys()):
+            parent = parent_map[child]
+            f.write(f"{child},{parent}\n")
+
+
+def build_prefix_parent_map(codes: Sequence[str]) -> Dict[str, str]:
+    code_set = set(codes)
+    parent_map: Dict[str, str] = {}
+    for code in codes:
+        parent = ROOT_CODE
+        candidate = code
+        while candidate:
+            candidate = candidate[:-1]
+            if candidate.endswith("."):
+                candidate = candidate[:-1]
+            if candidate in code_set:
+                parent = candidate
+                break
+        parent_map[code] = parent
+    return parent_map
+
+
+def build_ancestor_paths(
+    codes: Sequence[str],
+    parent_map: Dict[str, str],
+) -> Tuple[Dict[str, List[str]], Dict[str, int]]:
+    paths: Dict[str, List[str]] = {}
+    depths: Dict[str, int] = {}
+    visiting = set()
+
+    def get_path(code: str) -> List[str]:
+        if code in paths:
+            return paths[code]
+        if code in visiting:
+            return [ROOT_CODE, code]
+        visiting.add(code)
+        parent = parent_map.get(code, ROOT_CODE)
+        if parent == code or parent == ROOT_CODE:
+            path = [ROOT_CODE, code]
+        else:
+            path = get_path(parent) + [code]
+        visiting.remove(code)
+        paths[code] = path
+        depths[code] = len(path) - 1
+        return path
+
+    for code in codes:
+        get_path(code)
+    return paths, depths
+
+
+def lca_depth(path_a: List[str], path_b: List[str]) -> int:
+    n = min(len(path_a), len(path_b))
+    i = 0
+    while i < n and path_a[i] == path_b[i]:
+        i += 1
+    return i - 1
+
+
+def sample_tree_latent_pairs(
+    code_emb,
+    idx_to_code: Dict[int, str],
+    ancestor_paths: Dict[str, List[str]],
+    depths: Dict[str, int],
+    device: torch.device,
+    num_pairs: int,
+    seed: int,
+):
+    if not idx_to_code:
+        return None, None, None
+    max_idx = max(idx_to_code.keys())
+    rng = np.random.default_rng(seed)
+    idx_i = rng.integers(1, max_idx + 1, size=num_pairs)
+    idx_j = rng.integers(1, max_idx + 1, size=num_pairs)
+
+    tree_dists = []
+    lca_depths = []
+    valid_i = []
+    valid_j = []
+    for i, j in zip(idx_i, idx_j):
+        if i == j:
+            continue
+        code_i = idx_to_code.get(int(i))
+        code_j = idx_to_code.get(int(j))
+        if code_i is None or code_j is None:
+            continue
+        path_i = ancestor_paths.get(code_i)
+        path_j = ancestor_paths.get(code_j)
+        if not path_i or not path_j:
+            continue
+        lca = lca_depth(path_i, path_j)
+        if lca < 0:
+            continue
+        depth_i = depths.get(code_i, len(path_i) - 1)
+        depth_j = depths.get(code_j, len(path_j) - 1)
+        dist_tree = (depth_i - lca) + (depth_j - lca)
+        if dist_tree <= 0:
+            continue
+        tree_dists.append(dist_tree)
+        lca_depths.append(lca)
+        valid_i.append(int(i))
+        valid_j.append(int(j))
+
+    if not tree_dists:
+        return None, None, None
+
+    idx_i_t = torch.tensor(valid_i, device=device, dtype=torch.long)
+    idx_j_t = torch.tensor(valid_j, device=device, dtype=torch.long)
+    base = code_emb.emb
+    emb_full = base.weight if isinstance(base, nn.Embedding) else base
+    dist_latent = code_emb.manifold.dist(emb_full[idx_i_t], emb_full[idx_j_t]).squeeze(-1)
+    dist_latent_np = dist_latent.detach().cpu().numpy()
+    return np.array(tree_dists, dtype=np.float64), dist_latent_np, np.array(lca_depths, dtype=int)
+
+
+def diffusion_embedding_spearman(
+    code_emb,
+    diffusion_metric,
+    device: torch.device,
+    num_pairs: int,
+    seed: int,
+):
+    rng = np.random.default_rng(seed)
+    idx_i = rng.integers(1, diffusion_metric.num_codes, size=num_pairs)
+    idx_j = rng.integers(1, diffusion_metric.num_codes, size=num_pairs)
+    idx_i_t = torch.tensor(idx_i, device=device, dtype=torch.long)
+    idx_j_t = torch.tensor(idx_j, device=device, dtype=torch.long)
+
+    diff = diffusion_metric.profile[idx_i_t] - diffusion_metric.profile[idx_j_t]
+    target = torch.norm(diff, dim=-1)
+
+    base = code_emb.emb
+    emb_full = base.weight if isinstance(base, nn.Embedding) else base
+    emb = emb_full[: diffusion_metric.num_codes]
+    dist = code_emb.manifold.dist(emb[idx_i_t], emb[idx_j_t]).squeeze(-1)
+
+    diff_np = target.detach().cpu().numpy()
+    dist_np = dist.detach().cpu().numpy()
+    return spearman_corr(diff_np, dist_np)
+
+
+def distortion_stats_by_depth(
+    tree_dists: np.ndarray,
+    latent_dists: np.ndarray,
+    lca_depths: np.ndarray,
+):
+    ratios = latent_dists / tree_dists
+    depth_buckets: Dict[int, List[float]] = defaultdict(list)
+    for depth, ratio in zip(lca_depths, ratios):
+        if np.isfinite(ratio):
+            depth_buckets[int(depth)].append(float(ratio))
+
+    stats = []
+    for depth in sorted(depth_buckets.keys()):
+        vals = np.array(depth_buckets[depth], dtype=np.float64)
+        stats.append(
+            {
+                "depth": int(depth),
+                "count": int(vals.size),
+                "mean_ratio": float(vals.mean()),
+                "std_ratio": float(vals.std()),
+            }
+        )
+    return stats
+
+
 def plot_training_curves(train_losses, val_losses, output_path, title):
     if not train_losses:
         return
@@ -650,6 +883,29 @@ def plot_umap_embeddings(
     plt.scatter(coords[:, 0], coords[:, 1], s=6, alpha=0.6)
     plt.xlabel("UMAP-1")
     plt.ylabel("UMAP-2")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+    return True
+
+
+def plot_distortion_vs_depth(stats, output_path: str, title: str):
+    if not stats:
+        print("[HyperMedDiff-Risk] No distortion stats to plot; skipping.")
+        return False
+    depths = [entry["depth"] for entry in stats]
+    means = [entry["mean_ratio"] for entry in stats]
+    stds = [entry["std_ratio"] for entry in stats]
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.figure(figsize=(12, 8))
+    plt.plot(depths, means, marker="o", linewidth=2)
+    lower = [m - s for m, s in zip(means, stds)]
+    upper = [m + s for m, s in zip(means, stds)]
+    plt.fill_between(depths, lower, upper, alpha=0.2)
+    plt.xlabel("LCA depth")
+    plt.ylabel("Latent / Tree distance")
     plt.title(title)
     plt.tight_layout()
     plt.savefig(output_path)
@@ -1072,6 +1328,14 @@ def main():
                         help="Generate UMAP plots for diffusion embeddings.")
     parser.add_argument("--umap-max-points", type=int, default=0,
                         help="If >0, subsample at most this many codes for UMAP.")
+    parser.add_argument("--icd-tree", type=str, default=None,
+                        help="Path to ICD tree file (child,parent per line or JSON mapping).")
+    parser.add_argument("--icd-tree-out", type=str, default="",
+                        help="Optional path to write a prefix-based ICD tree CSV.")
+    parser.add_argument("--metric-pairs", type=int, default=5000,
+                        help="Number of random code pairs for tree/diffusion metrics.")
+    parser.add_argument("--metric-seed", type=int, default=42,
+                        help="Random seed for tree/diffusion metric sampling.")
     args = parser.parse_args()
 
     device = torch.device(
@@ -1104,6 +1368,29 @@ def main():
 
     real_stats = mimic_traj_stats(dataset.x)
     print(f"[HyperMedDiff-Risk] Real trajectory stats: {json.dumps(real_stats, indent=2)}")
+
+    idx_to_code = {idx: code for code, idx in dataset.code_map.items()}
+    codes = list(dataset.code_map.keys())
+    tree_source = "prefix"
+    if args.icd_tree:
+        try:
+            parent_map = load_icd_parent_map(args.icd_tree)
+            tree_source = f"file:{args.icd_tree}"
+        except Exception as exc:
+            print(f"[HyperMedDiff-Risk] Failed to load ICD tree ({exc}); using prefix tree.")
+            parent_map = build_prefix_parent_map(codes)
+    else:
+        parent_map = build_prefix_parent_map(codes)
+
+    for code in codes:
+        parent_map.setdefault(code, ROOT_CODE)
+
+    ancestor_paths, depth_map = build_ancestor_paths(codes, parent_map)
+    print(f"[HyperMedDiff-Risk] ICD tree source: {tree_source} | codes: {len(depth_map)}")
+    if tree_source == "prefix":
+        icd_tree_out = args.icd_tree_out or os.path.join(args.plot_dir, "icd9tree_prefix.csv")
+        save_icd_parent_map(parent_map, icd_tree_out)
+        print(f"[HyperMedDiff-Risk] Saved prefix ICD tree to {icd_tree_out}")
 
     os.makedirs(args.plot_dir, exist_ok=True)
     os.makedirs(args.output, exist_ok=True)
@@ -1146,7 +1433,9 @@ def main():
             lambda_radius=config["lambda_radius"],
             lambda_hdd=config["lambda_hdd"],
         )
-        pre_corr = diffusion_embedding_correlation(code_emb, diffusion_metric, device)
+        pre_corr = diffusion_embedding_correlation(
+            code_emb, diffusion_metric, device, num_pairs=args.metric_pairs
+        )
         print(f"[HyperMedDiff-Risk] Diffusion/embedding correlation after pretraining: {pre_corr:.4f}")
 
         for p in code_emb.parameters():
@@ -1209,8 +1498,42 @@ def main():
         print("[HyperMedDiff-Risk] Test risk metrics (MedDiffusion-style):")
         print(json.dumps(risk_metrics, indent=2))
 
-        diff_corr = diffusion_embedding_correlation(code_emb, diffusion_metric, device)
+        diff_corr = diffusion_embedding_correlation(
+            code_emb, diffusion_metric, device, num_pairs=args.metric_pairs
+        )
         print(f"[HyperMedDiff-Risk] Diffusion/embedding correlation after training: {diff_corr:.4f}")
+
+        diff_spearman = diffusion_embedding_spearman(
+            code_emb,
+            diffusion_metric,
+            device,
+            num_pairs=args.metric_pairs,
+            seed=args.metric_seed,
+        )
+        print(f"[HyperMedDiff-Risk] Diffusion/embedding Spearman rho: {diff_spearman:.4f}")
+
+        tree_spearman = None
+        distortion_stats = None
+        distortion_path = None
+        tree_dists, latent_dists, lca_depths = sample_tree_latent_pairs(
+            code_emb,
+            idx_to_code,
+            ancestor_paths,
+            depth_map,
+            device,
+            num_pairs=args.metric_pairs,
+            seed=args.metric_seed,
+        )
+        if tree_dists is not None:
+            tree_spearman = spearman_corr(tree_dists, latent_dists)
+            print(f"[HyperMedDiff-Risk] Tree/embedding Spearman rho: {tree_spearman:.4f}")
+            distortion_stats = distortion_stats_by_depth(tree_dists, latent_dists, lca_depths)
+            distortion_path = os.path.join(args.plot_dir, f"{exp_name}_distortion_depth.png")
+            distortion_title = f"MIMICIII | {exp_name} | Distortion vs LCA Depth"
+            if plot_distortion_vs_depth(distortion_stats, distortion_path, distortion_title):
+                print(f"[HyperMedDiff-Risk] Saved distortion vs depth plot to {distortion_path}")
+        else:
+            print("[HyperMedDiff-Risk] Tree metrics skipped (insufficient pairs).")
 
         if args.umap:
             visit_enc.eval()
@@ -1254,6 +1577,13 @@ def main():
                 "best_val_loss": best_val,
                 "pretrain_diff_corr": pre_corr,
                 "post_diff_corr": diff_corr,
+                "diffusion_latent_spearman": diff_spearman,
+                "tree_latent_spearman": tree_spearman,
+                "distortion_by_depth": distortion_stats,
+                "distortion_plot_path": distortion_path,
+                "icd_tree_source": tree_source,
+                "metric_pairs": args.metric_pairs,
+                "metric_seed": args.metric_seed,
                 "risk_metrics": risk_metrics,
             },
             ckpt_path,
@@ -1267,6 +1597,9 @@ def main():
                 "hyperparameters": copy.deepcopy(config),
                 "best_val_loss": best_val,
                 "risk_metrics": risk_metrics,
+                "tree_latent_spearman": tree_spearman,
+                "diffusion_latent_spearman": diff_spearman,
+                "distortion_plot_path": distortion_path,
                 "plot_path": plot_path,
                 "checkpoint_path": ckpt_path,
             }
