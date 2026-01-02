@@ -10,6 +10,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, random_split
+try:
+    from umap import UMAP
+except ImportError:
+    UMAP = None
 
 from dataset import MimicDataset, make_pad_collate
 from hyperbolic_embeddings import HyperbolicCodeEmbedding
@@ -62,7 +66,7 @@ def get_ablation_configs() -> List[Tuple[str, dict]]:
     # --- 2. GEOMETRY (Graph Scope) ---
     add_exp("02_NoDiffusion", {"diffusion_steps": [1]})
     add_exp("03_LocalDiff", {"diffusion_steps": [1, 2]})
-    add_exp("04_GlobalDiff", {"diffusion_steps": [1, 2, 4, 8, 16]})
+    add_exp("04_GlobalDiff_Stress", {"diffusion_steps": [1, 2, 4, 8, 16]})
 
     # --- 3. STRUCTURE (Hyperbolic Alignment) ---
     add_exp("05_NoHDD", {"lambda_hdd": 0.0})
@@ -73,8 +77,9 @@ def get_ablation_configs() -> List[Tuple[str, dict]]:
     add_exp("08_SmallDim", {"embed_dim": 64})
 
     # --- 5. MULTI-TASK (Generative Weight) ---
-    add_exp("09_DiscrimOnly", {"lambda_s": 0.0})  # Pure risk model
-    add_exp("10_GenFocus", {"lambda_s": 2.0})  # Stronger generative regularization
+    add_exp("09_NoSynthRisk", {"lambda_s": 0.0})  # Pure risk model
+    add_exp("10_GenFocus", {"lambda_s": 2.0, "lambda_d": 2.0})  # Stronger generative regularization
+    add_exp("")
 
     return experiments
 
@@ -606,6 +611,52 @@ def plot_training_curves(train_losses, val_losses, output_path, title):
     plt.close()
 
 
+def plot_umap_embeddings(
+    embeddings: torch.Tensor,
+    output_path: str,
+    title: str,
+    max_points: int | None = None,
+    seed: int = 42,
+):
+    if UMAP is None:
+        print("[HyperMedDiff-Risk] UMAP not installed; skipping diffusion embedding UMAP.")
+        return False
+    if embeddings.numel() == 0:
+        print("[HyperMedDiff-Risk] Empty embeddings; skipping diffusion embedding UMAP.")
+        return False
+
+    emb_np = embeddings.detach().cpu().numpy().astype(np.float32, copy=False)
+    if max_points is not None and max_points > 0 and emb_np.shape[0] > max_points:
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(emb_np.shape[0], size=max_points, replace=False)
+        emb_np = emb_np[idx]
+
+    n_neighbors = min(15, emb_np.shape[0] - 1)
+    if n_neighbors < 2:
+        print("[HyperMedDiff-Risk] Not enough points for UMAP; skipping.")
+        return False
+
+    reducer = UMAP(
+        n_components=2,
+        n_neighbors=n_neighbors,
+        min_dist=0.1,
+        metric="euclidean",
+        random_state=seed,
+    )
+    coords = reducer.fit_transform(emb_np)
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.figure(figsize=(10, 10))
+    plt.scatter(coords[:, 0], coords[:, 1], s=6, alpha=0.6)
+    plt.xlabel("UMAP-1")
+    plt.ylabel("UMAP-2")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+    return True
+
+
 # ----------------------------- Temporal LSTM + Risk Head (MedDiffusion backbone) ----------------------------- #
 
 class TemporalLSTMEncoder(nn.Module):
@@ -1017,6 +1068,10 @@ def main():
                         help="Directory for checkpoints.")
     parser.add_argument("--plot-dir", type=str, default="results/plots",
                         help="Directory for training curves.")
+    parser.add_argument("--umap", action="store_true",
+                        help="Generate UMAP plots for diffusion embeddings.")
+    parser.add_argument("--umap-max-points", type=int, default=0,
+                        help="If >0, subsample at most this many codes for UMAP.")
     args = parser.parse_args()
 
     device = torch.device(
@@ -1156,6 +1211,29 @@ def main():
 
         diff_corr = diffusion_embedding_correlation(code_emb, diffusion_metric, device)
         print(f"[HyperMedDiff-Risk] Diffusion/embedding correlation after training: {diff_corr:.4f}")
+
+        if args.umap:
+            visit_enc.eval()
+            with torch.no_grad():
+                base = visit_enc.code_emb.emb
+                X_hyp = base.weight if isinstance(base, nn.Embedding) else base
+                diff_embeds = visit_enc.diff_layer(X_hyp)
+                if diff_embeds.size(0) > 1:
+                    diff_embeds = diff_embeds[1:]
+                else:
+                    diff_embeds = diff_embeds[:0]
+
+            umap_path = os.path.join(args.plot_dir, f"{exp_name}_umap.png")
+            umap_title = (
+                f"MIMICIII | {exp_name} | Diffusion Embeddings UMAP | "
+                f"diffusion_steps={'-'.join(str(d) for d in config['diffusion_steps'])} | "
+                f"embed_dim={config['embed_dim']}"
+            )
+            max_points = args.umap_max_points if args.umap_max_points > 0 else None
+            if plot_umap_embeddings(
+                diff_embeds, umap_path, umap_title, max_points=max_points, seed=42
+            ):
+                print(f"[HyperMedDiff-Risk] Saved diffusion embedding UMAP to {umap_path}")
 
         ckpt_path = os.path.join(args.output, f"{exp_name}.pt")
         torch.save(
