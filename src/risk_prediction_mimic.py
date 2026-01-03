@@ -1327,7 +1327,7 @@ def run_epoch(
                 optimizer.zero_grad()
                 loss.backward()
                 if check_code_emb_grad and code_emb is not None:
-                    if any(p.grad is not None for p in code_emb.parameters()):
+                    if any(p.requires_grad and p.grad is not None for p in code_emb.parameters()):
                         raise RuntimeError("code_emb got gradients despite freezing.")
                 torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
                 optimizer.step()
@@ -1475,8 +1475,7 @@ def evaluate_risk(
 # ----------------------------- Main ----------------------------- #
 
 # Usage:
-# python scripts/icd9/build_icd9_parent_map.py --cms-input data/icd9/diagnosis.rtf --dataset-pkl data/mimiciii/mimic_hf_cohort.pkl --output data/icd9/icd9_parent_map.csv
-# python train.py --pkl data/mimiciii/mimic_hf_cohort.pkl --icd-tree data/icd9/icd9_parent_map.csv
+# python3 src/risk_prediction_mimic.py --pkl data/mimiciii/mimic_hf_cohort.pkl --icd-tree data/mimiciii/icd9_parent_map.csv > results/analysis/mimiciii_hf/mimiciii_hf_study.md
 
 def main():
     parser = argparse.ArgumentParser(
