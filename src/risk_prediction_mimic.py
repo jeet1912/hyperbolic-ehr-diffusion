@@ -804,35 +804,6 @@ def load_icd_parent_map(tree_path: str) -> Dict[str, str]:
     return parent_map
 
 
-def save_icd_parent_map(parent_map: Dict[str, str], output_path: str) -> None:
-    if not output_path:
-        return
-    dirpath = os.path.dirname(output_path)
-    if dirpath:
-        os.makedirs(dirpath, exist_ok=True)
-    with open(output_path, "w") as f:
-        for child in sorted(parent_map.keys()):
-            parent = parent_map[child]
-            f.write(f"{child},{parent}\n")
-
-
-def build_prefix_parent_map(codes: Sequence[str]) -> Dict[str, str]:
-    code_set = set(codes)
-    parent_map: Dict[str, str] = {}
-    for code in codes:
-        parent = ROOT_CODE
-        candidate = code
-        while candidate:
-            candidate = candidate[:-1]
-            if candidate.endswith("."):
-                candidate = candidate[:-1]
-            if candidate in code_set:
-                parent = candidate
-                break
-        parent_map[code] = parent
-    return parent_map
-
-
 def build_ancestor_paths(
     codes: Sequence[str],
     parent_map: Dict[str, str],
@@ -1503,6 +1474,10 @@ def evaluate_risk(
 
 # ----------------------------- Main ----------------------------- #
 
+# Usage:
+# python scripts/icd9/build_icd9_parent_map.py --cms-input data/icd9/diagnosis.rtf --dataset-pkl data/mimiciii/mimic_hf_cohort.pkl --output data/icd9/icd9_parent_map.csv
+# python train.py --pkl data/mimiciii/mimic_hf_cohort.pkl --icd-tree data/icd9/icd9_parent_map.csv
+
 def main():
     parser = argparse.ArgumentParser(
         description="Hyperbolic Graph Diffusion + Rectified Flow + MedDiffusion-style Risk Modeling."
@@ -1519,13 +1494,17 @@ def main():
                         help="If >0, subsample at most this many codes for UMAP.")
     parser.add_argument("--icd-tree", type=str, default=None,
                         help="Path to ICD tree file (child,parent per line or JSON mapping).")
-    parser.add_argument("--icd-tree-out", type=str, default="",
-                        help="Optional path to write a prefix-based ICD tree CSV.")
     parser.add_argument("--metric-pairs", type=int, default=5000,
                         help="Number of random code pairs for tree/diffusion metrics.")
     parser.add_argument("--metric-seed", type=int, default=42,
                         help="Random seed for tree/diffusion metric sampling.")
     args = parser.parse_args()
+
+    if not args.icd_tree:
+        parser.error(
+            "Missing --icd-tree. Build it first with "
+            "scripts/icd9/build_icd9_parent_map.py and pass the CSV path."
+        )
 
     device = torch.device(
         "cuda"
@@ -1574,26 +1553,20 @@ def main():
             get_corr_pairs(args.metric_pairs, path, valid_code_indices, seed=seed)
         )
         corr_pair_paths.append(path)
-    tree_source = "prefix"
-    if args.icd_tree:
-        try:
-            parent_map = load_icd_parent_map(args.icd_tree)
-            tree_source = f"file:{args.icd_tree}"
-        except Exception as exc:
-            print(f"[HyperMedDiff-Risk] Failed to load ICD tree ({exc}); using prefix tree.")
-            parent_map = build_prefix_parent_map(codes)
-    else:
-        parent_map = build_prefix_parent_map(codes)
+    try:
+        parent_map = load_icd_parent_map(args.icd_tree)
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to load ICD tree. Run scripts/icd9/build_icd9_parent_map.py "
+            "and pass the generated CSV via --icd-tree."
+        ) from exc
+    tree_source = "cms"
 
     for code in codes:
         parent_map.setdefault(code, ROOT_CODE)
 
     ancestor_paths, depth_map = build_ancestor_paths(codes, parent_map)
     print(f"[HyperMedDiff-Risk] ICD tree source: {tree_source} | codes: {len(depth_map)}")
-    if tree_source == "prefix":
-        icd_tree_out = args.icd_tree_out or os.path.join(args.plot_dir, "icd9tree_prefix.csv")
-        save_icd_parent_map(parent_map, icd_tree_out)
-        print(f"[HyperMedDiff-Risk] Saved prefix ICD tree to {icd_tree_out}")
 
     os.makedirs(args.plot_dir, exist_ok=True)
     os.makedirs(args.output, exist_ok=True)
@@ -1757,7 +1730,7 @@ def main():
             seed=args.metric_seed,
         )
         if tree_dists is not None:
-            tree_label = "prefix-tree" if tree_source == "prefix" else tree_source
+            tree_label = tree_source
             tree_spearman = spearman_corr(tree_dists, latent_dists)
             print(
                 f"[HyperMedDiff-Risk] Tree/embedding Spearman rho ({tree_label}): {tree_spearman:.4f}"
