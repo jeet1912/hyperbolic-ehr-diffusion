@@ -1570,13 +1570,7 @@ def main():
     os.makedirs(args.plot_dir, exist_ok=True)
     os.makedirs(args.output, exist_ok=True)
 
-    experiments_all = get_ablation_configs()
-    experiments = []
-    for name, cfg in experiments_all:
-        if name == "01_Baseline":
-            print("[HyperMedDiff-Risk] Skipping 01_Baseline (already executed separately).")
-            continue
-        experiments.append((name, cfg))
+    experiments = get_ablation_configs()
 
     print(f"[HyperMedDiff-Risk] Running {len(experiments)} ablation configurations.")
     summary_records = []
