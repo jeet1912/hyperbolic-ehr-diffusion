@@ -2,7 +2,7 @@ import argparse
 import copy
 import json
 import os
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
@@ -815,6 +815,10 @@ def build_ancestor_paths(
     def get_path(code: str) -> List[str]:
         if code in paths:
             return paths[code]
+        if code == ROOT_CODE:
+            paths[code] = [ROOT_CODE]
+            depths[code] = 0
+            return paths[code]
         if code in visiting:
             return [ROOT_CODE, code]
         visiting.add(code)
@@ -828,8 +832,11 @@ def build_ancestor_paths(
         depths[code] = len(path) - 1
         return path
 
-    for code in codes:
-        get_path(code)
+    all_nodes = set(codes) | set(parent_map.keys()) | set(parent_map.values())
+    # Filter out empty / whitespace nodes that can appear due to malformed parent_map entries
+    all_nodes = {str(n) for n in all_nodes if n is not None and str(n).strip() != ""}
+    for node in all_nodes:
+        get_path(node)
     return paths, depths
 
 
@@ -851,44 +858,61 @@ def sample_tree_latent_pairs(
     seed: int,
 ):
     if not idx_to_code:
-        return None, None, None
+        return None, None, None, None
     rng = np.random.default_rng(seed)
     valid_indices = np.array(sorted(idx_to_code.keys()), dtype=np.int64)
     if valid_indices.size == 0:
-        return None, None, None
+        return None, None, None, None
     idx_i = rng.choice(valid_indices, size=num_pairs, replace=True)
     idx_j = rng.choice(valid_indices, size=num_pairs, replace=True)
 
+    debug = {
+        "total_drawn": int(num_pairs),
+        "skipped_same": 0,
+        "skipped_missing_code": 0,
+        "skipped_missing_path": 0,
+        "skipped_bad_lca": 0,
+        "skipped_tree_dist_le0": 0,
+        "kept": 0,
+        "lca_depth_histogram": Counter(),
+    }
     tree_dists = []
     lca_depths = []
     valid_i = []
     valid_j = []
     for i, j in zip(idx_i, idx_j):
         if i == j:
+            debug["skipped_same"] += 1
             continue
         code_i = idx_to_code.get(int(i))
         code_j = idx_to_code.get(int(j))
         if code_i is None or code_j is None:
+            debug["skipped_missing_code"] += 1
             continue
         path_i = ancestor_paths.get(code_i)
         path_j = ancestor_paths.get(code_j)
         if not path_i or not path_j:
+            debug["skipped_missing_path"] += 1
             continue
         lca = lca_depth(path_i, path_j)
         if lca < 0:
+            debug["skipped_bad_lca"] += 1
             continue
         depth_i = depths.get(code_i, len(path_i) - 1)
         depth_j = depths.get(code_j, len(path_j) - 1)
         dist_tree = (depth_i - lca) + (depth_j - lca)
         if dist_tree <= 0:
+            debug["skipped_tree_dist_le0"] += 1
             continue
         tree_dists.append(dist_tree)
         lca_depths.append(lca)
         valid_i.append(int(i))
         valid_j.append(int(j))
+        debug["kept"] += 1
+        debug["lca_depth_histogram"][int(lca)] += 1
 
     if not tree_dists:
-        return None, None, None
+        return None, None, None, debug
 
     idx_i_t = torch.tensor(valid_i, device=device, dtype=torch.long)
     idx_j_t = torch.tensor(valid_j, device=device, dtype=torch.long)
@@ -896,7 +920,12 @@ def sample_tree_latent_pairs(
     emb_full = base.weight if isinstance(base, nn.Embedding) else base
     dist_latent = code_emb.manifold.dist(emb_full[idx_i_t], emb_full[idx_j_t]).squeeze(-1)
     dist_latent_np = dist_latent.detach().cpu().numpy()
-    return np.array(tree_dists, dtype=np.float64), dist_latent_np, np.array(lca_depths, dtype=int)
+    return (
+        np.array(tree_dists, dtype=np.float64),
+        dist_latent_np,
+        np.array(lca_depths, dtype=int),
+        debug,
+    )
 
 
 def diffusion_embedding_spearman(
@@ -1028,19 +1057,27 @@ def plot_distortion_vs_depth(stats, output_path: str, title: str):
     depths = [entry["depth"] for entry in stats]
     means = [entry["mean_ratio"] for entry in stats]
     stds = [entry["std_ratio"] for entry in stats]
+    counts = [entry["count"] for entry in stats]
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.figure(figsize=(12, 8))
-    plt.plot(depths, means, marker="o", linewidth=2)
+    plt.plot(depths, means, linewidth=2)
+    plt.scatter(depths, means, s=60, zorder=3)
     lower = [m - s for m, s in zip(means, stds)]
     upper = [m + s for m, s in zip(means, stds)]
     plt.fill_between(depths, lower, upper, alpha=0.2)
+    for depth, mean, count in zip(depths, means, counts):
+        plt.annotate(f"n={count}", (depth, mean), textcoords="offset points", xytext=(0, 8),
+                     ha="center", fontsize=9)
     plt.xlabel("LCA depth")
     plt.ylabel("Latent / Tree distance")
     plt.title(title)
+    plt.xticks(sorted(set(depths)))
     plt.tight_layout()
     plt.savefig(output_path)
     plt.close()
+    if len(stats) == 1:
+        print("[HyperMedDiff-Risk] Distortion plot has a single depth bucket.")
     return True
 
 
@@ -1497,6 +1534,8 @@ def main():
                         help="Number of random code pairs for tree/diffusion metrics.")
     parser.add_argument("--metric-seed", type=int, default=42,
                         help="Random seed for tree/diffusion metric sampling.")
+    parser.add_argument("--tree-metric-debug", action="store_true",
+                        help="Print detailed tree metric debug stats.")
     args = parser.parse_args()
 
     if not args.icd_tree:
@@ -1713,7 +1752,7 @@ def main():
         tree_spearman = None
         distortion_stats = None
         distortion_path = None
-        tree_dists, latent_dists, lca_depths = sample_tree_latent_pairs(
+        tree_dists, latent_dists, lca_depths, tree_debug = sample_tree_latent_pairs(
             code_emb,
             idx_to_code,
             ancestor_paths,
@@ -1722,6 +1761,27 @@ def main():
             num_pairs=args.metric_pairs,
             seed=args.metric_seed,
         )
+        if tree_debug:
+            kept = tree_debug.get("kept", 0)
+            summary = (
+                f"kept={kept} | "
+                f"same={tree_debug.get('skipped_same', 0)} | "
+                f"missing_code={tree_debug.get('skipped_missing_code', 0)} | "
+                f"missing_path={tree_debug.get('skipped_missing_path', 0)} | "
+                f"bad_lca={tree_debug.get('skipped_bad_lca', 0)} | "
+                f"tree_dist_le0={tree_debug.get('skipped_tree_dist_le0', 0)}"
+            )
+            if args.tree_metric_debug:
+                hist = dict(sorted(tree_debug.get("lca_depth_histogram", {}).items()))
+                print(f"[HyperMedDiff-Risk] Tree metric debug: {summary}")
+                print(f"[HyperMedDiff-Risk] LCA depth histogram: {hist}")
+            else:
+                print(f"[HyperMedDiff-Risk] Tree metric debug summary: {summary}")
+            if kept:
+                lca0 = tree_debug.get("lca_depth_histogram", {}).get(0, 0)
+                if lca0 / kept > 0.8:
+                    print("[HyperMedDiff-Risk] Warning: >80% of kept pairs have LCA depth 0.")
+
         if tree_dists is not None:
             tree_label = tree_source
             tree_spearman = spearman_corr(tree_dists, latent_dists)
@@ -1729,6 +1789,15 @@ def main():
                 f"[HyperMedDiff-Risk] Tree/embedding Spearman rho ({tree_label}): {tree_spearman:.4f}"
             )
             distortion_stats = distortion_stats_by_depth(tree_dists, latent_dists, lca_depths)
+            if distortion_stats:
+                print("[HyperMedDiff-Risk] Distortion by depth (depth,count,mean,std):")
+                for entry in distortion_stats:
+                    print(
+                        f"[HyperMedDiff-Risk] depth={entry['depth']} "
+                        f"count={entry['count']} "
+                        f"mean={entry['mean_ratio']:.4f} "
+                        f"std={entry['std_ratio']:.4f}"
+                    )
             distortion_path = os.path.join(args.plot_dir, f"{exp_name}_distortion_depth.png")
             distortion_title = (
                 f"MIMICIII | {exp_name} | Distortion vs LCA Depth | tree={tree_label}"
