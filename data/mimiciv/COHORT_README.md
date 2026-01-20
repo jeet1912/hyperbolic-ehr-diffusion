@@ -1,0 +1,11 @@
+# Cohort and Task Filtering Notes
+
+I built the cohort strictly from ICU patients in MIMIC‑IV (via `icustays`) and then applied the filters exactly as described: keep admissions with discharge summaries, remove admissions with more than two ICU stays, and remove negative ICU or hospital LOS. The downstream tables are limited to hosp/patients, hosp/admissions, hosp/diagnoses_icd, hosp/labevents, hosp/microbiologyevents, hosp/prescriptions, hosp/transfers, icu/icustays, icu/inputevents, icu/outputevents, and icu/procedureevents as described in the paper. 
+
+Counts from the latest run (`llemr_cohort.log`) reflect ICU‑only filtering and then the discharge/LOS filters. ICU scope first: 65,366 ICU patients and 85,242 ICU admissions. After applying discharge summaries + ICU stay count + LOS filters, the cohort contains 49,756 patients and 64,437 admissions.
+
+Task cohorts are built on top of that cohort. Mortality uses the first 48 hours of hospital admission and labels death at discharge; LOS uses the first 48 hours and labels LOS > 7 days; both exclude admissions with LOS < 48 hours. Readmission uses all events from the admission and excludes in‑hospital deaths, then labels readmission within 14 days. The current counts are: mortality 58,513 admissions (4,810 positive), LOS 58,513 admissions (29,290 positive), and readmission 58,056 admissions (8,105 positive).
+
+Differences vs the published numbers are expected. The paper reports 55,846 admissions and ~51K ICU patients, while this run yields 64,437 admissions and 65,366 ICU patients before filtering. This is consistent with dataset version differences (MIMIC‑IV v3.1 and MIMIC‑IV‑Note v2.2) and with how discharge summaries are provided (MIMIC‑IV‑Note `discharge` instead of legacy `noteevents`). The filtering logic matches the description; the counts reflect the specific version and data availability in this environment.
+
+Splits are done at the patient level to avoid leakage: `subject_id` is hashed into train/val/test (80/10/10), so the same patient never appears across multiple splits. All task cohorts inherit this split from the base ICU cohort.
