@@ -20,6 +20,7 @@ class MimicDataset(Dataset):
         self.y = data["y"]
         self.code_map = data["code_map"]
         self.vocab_size = data["vocab_size"]
+        self.subject_id = data["subject_id"]
 
         print(f"[MIMIC] Patients: {len(self.x)} | Vocab size: {self.vocab_size}")
 

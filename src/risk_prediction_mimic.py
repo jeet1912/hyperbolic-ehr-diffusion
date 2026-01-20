@@ -540,7 +540,7 @@ def pretrain_code_embedding(
     return code_emb
 
 
-# ----------------------------- Rectified Flow in Hyperbolic Latent Space ----------------------------- #
+# ----------------------------- Rectified Flow in Tangent Space ----------------------------- #
 
 def compute_visit_deltas(visit_mask: torch.Tensor) -> torch.Tensor:
     """
@@ -590,25 +590,21 @@ def flatten_visits_from_multihot(
     return flat_visits, flat_delta_tensor, B, L
 
 
-def rectified_flow_loss_hyperbolic(
+def rectified_flow_loss(
     velocity_model,
     latents: torch.Tensor,
     visit_mask: torch.Tensor,
-    manifold,
     history: torch.Tensor | None = None,
 ):
     """
-    Hyperbolic rectified flow in tangent coordinates (no decoder needed).
+    Rectified flow in tangent coordinates (no decoder needed).
     latents: [B, L, D] tangent visit latents (data).
     """
     device = latents.device
-    B, L, _ = latents.shape
+    B, _, _ = latents.shape
 
-    x_data = manifold.expmap0(latents)
-    eps = torch.randn_like(latents)
-    x_noise = manifold.expmap0(eps)
-    z_data = manifold.logmap0(x_data)
-    z_noise = manifold.logmap0(x_noise)
+    z_data = latents
+    z_noise = torch.randn_like(latents)
 
     t = torch.rand(B, device=device)
     t_view = t.view(B, 1, 1)
@@ -617,7 +613,9 @@ def rectified_flow_loss_hyperbolic(
     target_velocity = z_data - z_noise
     pred_velocity = velocity_model(z_t, t, visit_mask, history=history)
     loss = (pred_velocity - target_velocity) ** 2
-    mask = visit_mask.unsqueeze(-1).float()
+    # Average over latent dimensions so flow loss is per-visit, not per-dim sum.
+    loss = loss.mean(dim=-1)
+    mask = visit_mask.float()
     return (loss * mask).sum() / (mask.sum() + 1e-8)
 
 
@@ -1318,11 +1316,10 @@ def run_epoch(
             if lambda_d > 0:
                 reps_real, h_seq = risk_lstm(latents, visit_mask_bool, return_sequence=True)
                 history_context = build_history_context(h_seq, visit_mask_bool)
-                flow_loss = rectified_flow_loss_hyperbolic(
+                flow_loss = rectified_flow_loss(
                     velocity_model,
                     latents,
                     visit_mask_bool,
-                    visit_enc.manifold,
                     history=history_context,
                 )
             else:
@@ -1508,6 +1505,29 @@ def evaluate_risk(
     metrics = binary_classification_metrics(y_true, y_prob, threshold=0.5)
     return metrics
 
+def group_split_indices(subject_ids, train_frac=0.7, val_frac=0.15, seed=42):
+    rng = np.random.default_rng(seed)
+    unique = np.array(sorted(set(subject_ids)), dtype=np.int64)
+    rng.shuffle(unique)
+
+    n = len(unique)
+    n_train = int(train_frac * n)
+    n_val = int(val_frac * n)
+
+    train_subj = set(unique[:n_train])
+    val_subj = set(unique[n_train:n_train+n_val])
+    test_subj = set(unique[n_train+n_val:])
+
+    train_idx, val_idx, test_idx = [], [], []
+    for i, s in enumerate(subject_ids):
+        if s in train_subj:
+            train_idx.append(i)
+        elif s in val_subj:
+            val_idx.append(i)
+        else:
+            test_idx.append(i)
+    return train_idx, val_idx, test_idx
+
 
 # ----------------------------- Main ----------------------------- #
 
@@ -1557,13 +1577,11 @@ def main():
     dataset = MimicDataset(args.pkl)
     collate_fn = make_pad_collate(dataset.vocab_size)
 
-    train_size = int(0.7 * len(dataset))
-    val_size = int(0.15 * len(dataset))
-    test_size = len(dataset) - train_size - val_size
-    g = torch.Generator().manual_seed(42)
-    train_ds, val_ds, test_ds = random_split(
-        dataset, [train_size, val_size, test_size], generator=g
-    )
+    train_idx, val_idx, test_idx = group_split_indices(dataset.subject_id, seed=42)
+    train_ds = torch.utils.data.Subset(dataset, train_idx)
+    val_ds   = torch.utils.data.Subset(dataset, val_idx)
+    test_ds  = torch.utils.data.Subset(dataset, test_idx)
+
 
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE,
                               shuffle=True, collate_fn=collate_fn)
