@@ -1,6 +1,7 @@
 import argparse
 import copy
 import json
+import math
 import os
 from collections import Counter, defaultdict
 from typing import Dict, List, Sequence, Tuple
@@ -151,7 +152,8 @@ def print_summary_table(records: List[dict]):
 
     headers = [
         "Run", "Experiment", "ValLoss", "AUROC", "AUPRC", "Accuracy", "F1",
-        "Diff–Lat ρ", "Tree–Lat ρ", "Dist μ", "Dist σ"
+        "Diff–Lat ρ", "Tree–Lat ρ", "Dist μ", "Dist σ",
+        "PreFaithMean", "PreFaithStd", "PostFaithMean", "PostFaithStd"
     ]
 
     def fmt(x, nd=4):
@@ -178,6 +180,10 @@ def print_summary_table(records: List[dict]):
                 fmt(rec.get("tree_latent_spearman")),
                 fmt(rec.get("distortion_depth_mean")),
                 fmt(rec.get("distortion_depth_std")),
+                fmt(rec.get("pre_faith_mean")),
+                fmt(rec.get("pre_faith_std")),
+                fmt(rec.get("post_faith_mean")),
+                fmt(rec.get("post_faith_std")),
             ]
         )
 
@@ -274,25 +280,100 @@ def build_diffusion_kernels_from_sequences(
 
 # ----------------------------- Graph Diffusion Visit Encoder ----------------------------- #
 
+def _poincare_gamma(points: torch.Tensor, c: torch.Tensor | float) -> torch.Tensor:
+    c = torch.as_tensor(c, device=points.device, dtype=points.dtype)
+    sqnorm = (points ** 2).sum(dim=-1)
+    return 1.0 / torch.sqrt(torch.clamp(1.0 - c * sqnorm, min=1e-6))
+
+
 class HyperbolicGraphDiffusionLayer(nn.Module):
     """
-    Applies multi-scale diffusion over the code graph in tangent space,
-    then projects back to a single embedding.
+    Applies multi-scale diffusion using Einstein midpoints (hyperbolic-aware).
     """
     def __init__(self, manifold, dim, diffusion_kernels: torch.Tensor):
         super().__init__()
         self.manifold = manifold
         self.register_buffer("kernels", diffusion_kernels)
-        self.proj = nn.Linear(dim * diffusion_kernels.size(0), dim)
+        num_kernels = diffusion_kernels.size(0)
+        self.weights = nn.Parameter(torch.empty(num_kernels, dim, dim))
+        self.scales = nn.Parameter(torch.ones(num_kernels))
+        nn.init.xavier_uniform_(self.weights)
 
     def forward(self, X_hyp: torch.Tensor) -> torch.Tensor:
         # X_hyp: [V, D] hyperbolic code embeddings
-        Z0 = self.manifold.logmap0(X_hyp)      # [V, D] in tangent
-        Z_scales = []
+        gamma = _poincare_gamma(X_hyp, self.manifold.c)
+        weighted = gamma.unsqueeze(-1) * X_hyp  # [V, D]
+        out = None
         for k in range(self.kernels.size(0)):
-            Z_scales.append(torch.matmul(self.kernels[k], Z0))  # [V, D]
-        Z_cat = torch.cat(Z_scales, dim=-1)    # [V, K*D]
-        return self.proj(Z_cat)                # [V, D]
+            kernel = self.kernels[k]
+            numer = torch.matmul(kernel, weighted)  # [V, D]
+            denom = torch.matmul(kernel, gamma).clamp_min(1e-8)  # [V]
+            Z_k = numer / denom.unsqueeze(-1)
+            Z_k = self.manifold.projx(Z_k)
+            Z_k = self.manifold.mobius_matvec(self.weights[k], Z_k)
+            Z_k = self.manifold.mobius_scalar_mul(self.scales[k], Z_k)
+            out = Z_k if out is None else self.manifold.mobius_add(out, Z_k)
+        return self.manifold.projx(out)
+
+
+class HyperbolicSelfAttentionBlock(nn.Module):
+    """
+    Hyperbolic attention using geodesic distances + Einstein midpoint aggregation.
+    """
+    def __init__(self, manifold, dim, num_heads=1, ff_dim=128, dropout=0.0):
+        super().__init__()
+        self.manifold = manifold
+        self.dim = dim
+        self.num_heads = num_heads
+        self.dropout = nn.Dropout(dropout)
+        self.Wq = nn.Parameter(torch.empty(dim, dim))
+        self.Wk = nn.Parameter(torch.empty(dim, dim))
+        self.Wv = nn.Parameter(torch.empty(dim, dim))
+        self.ff = nn.Sequential(
+            nn.Linear(dim, ff_dim),
+            nn.GELU(),
+            nn.Linear(ff_dim, dim),
+        )
+        nn.init.xavier_uniform_(self.Wq)
+        nn.init.xavier_uniform_(self.Wk)
+        nn.init.xavier_uniform_(self.Wv)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: [B, L, D] or [L, D] hyperbolic points; returns same shape.
+        """
+        orig_2d = x.dim() == 2
+        if orig_2d:
+            x = x.unsqueeze(0)
+
+        q = self.manifold.mobius_matvec(self.Wq, x)
+        k = self.manifold.mobius_matvec(self.Wk, x)
+        v = self.manifold.mobius_matvec(self.Wv, x)
+        q = self.manifold.projx(q)
+        k = self.manifold.projx(k)
+        v = self.manifold.projx(v)
+
+        dist = self.manifold.dist(q.unsqueeze(2), k.unsqueeze(1))  # [B, L, L]
+        attn_logits = -dist / math.sqrt(self.dim)
+        attn = torch.softmax(attn_logits, dim=-1)
+        attn = self.dropout(attn)
+
+        gamma = _poincare_gamma(v, self.manifold.c)
+        weighted = gamma.unsqueeze(-1) * v
+        numer = torch.matmul(attn, weighted)  # [B, L, D]
+        denom = torch.matmul(attn, gamma).clamp_min(1e-8)  # [B, L]
+        out = numer / denom.unsqueeze(-1)
+        out = self.manifold.projx(out)
+
+        out = self.manifold.mobius_add(x, self.dropout(out))
+        out = self.manifold.projx(out)
+
+        ff_out = self.ff(out)
+        ff_hyp = self.manifold.expmap0(ff_out)
+        out = self.manifold.mobius_add(out, self.dropout(ff_hyp))
+        out = self.manifold.projx(out)
+
+        return out.squeeze(0) if orig_2d else out
 
 
 class GlobalSelfAttentionBlock(nn.Module):
@@ -327,7 +408,7 @@ class GlobalSelfAttentionBlock(nn.Module):
 
 class GraphHyperbolicVisitEncoderGlobal(nn.Module):
     """
-    Your HGDM-style visit encoder:
+    HGDM-style visit encoder:
 
     codes -> hyperbolic code embedding -> graph diffusion over co-occurrence
           -> global attention -> per-visit hyperbolic latent.
@@ -361,17 +442,31 @@ class GraphHyperbolicVisitEncoderGlobal(nn.Module):
         )
 
         if use_attention and num_attn_layers > 0:
-            self.attn_layers = nn.ModuleList(
-                [
-                    GlobalSelfAttentionBlock(
-                        dim=self.dim,
-                        num_heads=num_heads,
-                        ff_dim=ff_dim,
-                        dropout=dropout,
-                    )
-                    for _ in range(num_attn_layers)
-                ]
-            )
+            if output_hyperbolic:
+                self.attn_layers = nn.ModuleList(
+                    [
+                        HyperbolicSelfAttentionBlock(
+                            manifold=self.manifold,
+                            dim=self.dim,
+                            num_heads=num_heads,
+                            ff_dim=ff_dim,
+                            dropout=dropout,
+                        )
+                        for _ in range(num_attn_layers)
+                    ]
+                )
+            else:
+                self.attn_layers = nn.ModuleList(
+                    [
+                        GlobalSelfAttentionBlock(
+                            dim=self.dim,
+                            num_heads=num_heads,
+                            ff_dim=ff_dim,
+                            dropout=dropout,
+                        )
+                        for _ in range(num_attn_layers)
+                    ]
+                )
         else:
             self.attn_layers = nn.ModuleList([])
 
@@ -393,19 +488,23 @@ class GraphHyperbolicVisitEncoderGlobal(nn.Module):
             device = base.device
             X_hyp = base
 
-        # Graph diffusion in tangent space + global attention on codes
-        Z_tan = self.diff_layer(X_hyp)   # [V, D]
-        H = Z_tan.unsqueeze(0)           # [1, V, D]
+        # Graph diffusion + global attention on hyperbolic codes
+        H = self.diff_layer(X_hyp).unsqueeze(0)  # [1, V, D]
         for layer in self.attn_layers:
             H = layer(H)
+            if self.output_hyperbolic:
+                H = self.manifold.projx(H)
         H = H.squeeze(0)                 # [V, D]
 
         time_embeds = None
+        time_embeds_hyp = None
         if flat_deltas is not None:
             delta = flat_deltas.to(device).unsqueeze(-1)  # [N, 1]
             freq_term = self.time_freq(delta / 180.0)
             time_term = 1.0 - torch.tanh(freq_term) ** 2
             time_embeds = self.time_proj(time_term)
+            if self.output_hyperbolic:
+                time_embeds_hyp = self.manifold.expmap0(time_embeds)
 
         visit_latents = []
         for idx, v in enumerate(flat_visits):
@@ -415,11 +514,23 @@ class GraphHyperbolicVisitEncoderGlobal(nn.Module):
                 visit_vec = torch.zeros(self.dim, device=device)
             else:
                 h_codes = H[codes]           # [n_codes, D]
-                visit_vec = h_codes.mean(dim=0)
+                if self.output_hyperbolic:
+                    weights = torch.full(
+                        (h_codes.size(0),),
+                        1.0 / h_codes.size(0),
+                        device=device,
+                        dtype=h_codes.dtype,
+                    )
+                    visit_vec = self.manifold.weighted_midpoint(
+                        h_codes, weights=weights, reducedim=[0]
+                    )
+                else:
+                    visit_vec = h_codes.mean(dim=0)
             if time_embeds is not None:
-                visit_vec = visit_vec + time_embeds[idx]
-            if self.output_hyperbolic:
-                visit_vec = self.manifold.expmap0(visit_vec)
+                if self.output_hyperbolic:
+                    visit_vec = self.manifold.mobius_add(visit_vec, time_embeds_hyp[idx])
+                else:
+                    visit_vec = visit_vec + time_embeds[idx]
             visit_latents.append(visit_vec)
 
         return torch.stack(visit_latents, dim=0)   # [B*L, D] (hyperbolic if enabled)
@@ -657,7 +768,7 @@ def sample_latents_from_flow(
     steps: int,
     device: torch.device,
     manifold=None,
-    output_hyperbolic: bool = False,
+    output_hyperbolic: bool = True,
 ):
     """
     Sequential, conditional sampling: each visit latent depends on the
@@ -1918,6 +2029,10 @@ def main():
                 "best_val_loss": best_val,
                 "risk_metrics": risk_metrics,
                 # Faithfulness metrics
+                "pre_faith_mean": pre_faith_mean,
+                "pre_faith_std": pre_faith_std,
+                "post_faith_mean": post_faith_mean,
+                "post_faith_std": post_faith_std,
                 "diffusion_latent_spearman": diff_spearman,
                 "tree_latent_spearman": tree_spearman,
                 "distortion_depth_mean": dist_mean,
