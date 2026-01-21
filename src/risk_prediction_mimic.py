@@ -330,7 +330,7 @@ class GraphHyperbolicVisitEncoderGlobal(nn.Module):
     Your HGDM-style visit encoder:
 
     codes -> hyperbolic code embedding -> graph diffusion over co-occurrence
-          -> global attention -> per-visit tangent latent.
+          -> global attention -> per-visit hyperbolic latent.
     """
     def __init__(
         self,
@@ -342,6 +342,7 @@ class GraphHyperbolicVisitEncoderGlobal(nn.Module):
         ff_dim: int = 128,
         dropout: float = 0.0,
         use_attention: bool = True,
+        output_hyperbolic: bool = True,
     ):
         super().__init__()
         self.code_emb = code_emb
@@ -377,6 +378,7 @@ class GraphHyperbolicVisitEncoderGlobal(nn.Module):
         self.output_dim = self.dim
         self.time_freq = nn.Linear(1, self.dim)
         self.time_proj = nn.Linear(self.dim, self.dim)
+        self.output_hyperbolic = output_hyperbolic
 
     def forward(
         self,
@@ -416,9 +418,11 @@ class GraphHyperbolicVisitEncoderGlobal(nn.Module):
                 visit_vec = h_codes.mean(dim=0)
             if time_embeds is not None:
                 visit_vec = visit_vec + time_embeds[idx]
+            if self.output_hyperbolic:
+                visit_vec = self.manifold.expmap0(visit_vec)
             visit_latents.append(visit_vec)
 
-        return torch.stack(visit_latents, dim=0)   # [B*L, D] in tangent coords
+        return torch.stack(visit_latents, dim=0)   # [B*L, D] (hyperbolic if enabled)
 
 
 # ----------------------------- HDD-style code metric ----------------------------- #
@@ -652,11 +656,14 @@ def sample_latents_from_flow(
     latent_dim: int,
     steps: int,
     device: torch.device,
+    manifold=None,
+    output_hyperbolic: bool = False,
 ):
     """
     Sequential, conditional sampling: each visit latent depends on the
     previous hidden state h_{k-1} with step-wise attention fusion
     (MedDiffusion Eq. 3.9-3.12).
+    If output_hyperbolic is True, returns manifold points via expmap0.
     """
     B, L = visit_mask.shape
     latents = torch.zeros(B, L, latent_dim, device=device)
@@ -694,6 +701,8 @@ def sample_latents_from_flow(
             mask_expand = active.unsqueeze(-1)
             h_prev = torch.where(mask_expand, new_h, h_prev)
 
+    if output_hyperbolic and manifold is not None:
+        return manifold.expmap0(latents)
     return latents
 
 
@@ -1311,38 +1320,48 @@ def run_epoch(
             flat_visits, flat_deltas, B, L = flatten_visits_from_multihot(
                 padded_x, visit_mask, pad_idx=0, visit_deltas=visit_deltas
             )
-            latents = visit_enc(flat_visits, flat_deltas).to(device).view(B, L, -1)  # [B, L, D]
+            latents_hyp = visit_enc(flat_visits, flat_deltas).to(device).view(B, L, -1)  # [B, L, D]
+            if getattr(visit_enc, "output_hyperbolic", False):
+                latents_tan = visit_enc.manifold.logmap0(latents_hyp)
+            else:
+                latents_tan = latents_hyp
 
             if lambda_d > 0:
-                reps_real, h_seq = risk_lstm(latents, visit_mask_bool, return_sequence=True)
+                reps_real, h_seq = risk_lstm(latents_tan, visit_mask_bool, return_sequence=True)
                 history_context = build_history_context(h_seq, visit_mask_bool)
                 flow_loss = rectified_flow_loss(
                     velocity_model,
-                    latents,
+                    latents_tan,
                     visit_mask_bool,
                     history=history_context,
                 )
             else:
-                reps_real = risk_lstm(latents, visit_mask_bool, return_sequence=False)
-                flow_loss = latents.new_tensor(0.0)
+                reps_real = risk_lstm(latents_tan, visit_mask_bool, return_sequence=False)
+                flow_loss = latents_tan.new_tensor(0.0)
 
             # Risk on REAL trajectories
             logits_real = risk_head(reps_real)                 # [B]
             loss_real = bce(logits_real, labels)
 
-            loss_synth = latents.new_tensor(0.0)
-            loss_consistency = latents.new_tensor(0.0)
+            loss_synth = latents_tan.new_tensor(0.0)
+            loss_consistency = latents_tan.new_tensor(0.0)
             if effective_lambda_s > 0 or effective_lambda_consistency > 0:
                 with torch.no_grad():
                     latents_synth = sample_latents_from_flow(
                         velocity_model,
                         risk_lstm,
                         visit_mask_bool,
-                        latent_dim=latents.size(-1),
+                        latent_dim=latents_tan.size(-1),
                         steps=synthetic_steps,
                         device=device,
+                        manifold=visit_enc.manifold,
+                        output_hyperbolic=getattr(visit_enc, "output_hyperbolic", False),
                     )
-                h_synth = risk_lstm(latents_synth, visit_mask_bool)
+                if getattr(visit_enc, "output_hyperbolic", False):
+                    latents_synth_tan = visit_enc.manifold.logmap0(latents_synth)
+                else:
+                    latents_synth_tan = latents_synth
+                h_synth = risk_lstm(latents_synth_tan, visit_mask_bool)
                 if effective_lambda_s > 0:
                     logits_synth = risk_head(h_synth)
                     loss_synth = bce(logits_synth, labels)
@@ -1489,8 +1508,12 @@ def evaluate_risk(
             flat_visits, flat_deltas, B, L = flatten_visits_from_multihot(
                 padded_x, visit_mask, pad_idx=0, visit_deltas=visit_deltas
             )
-            latents = visit_enc(flat_visits, flat_deltas).to(device).view(B, L, -1)
-            h = risk_lstm(latents, visit_mask.bool())
+            latents_hyp = visit_enc(flat_visits, flat_deltas).to(device).view(B, L, -1)
+            if getattr(visit_enc, "output_hyperbolic", False):
+                latents_tan = visit_enc.manifold.logmap0(latents_hyp)
+            else:
+                latents_tan = latents_hyp
+            h = risk_lstm(latents_tan, visit_mask.bool())
             logits = risk_head(h)
             probs = torch.sigmoid(logits)
 
