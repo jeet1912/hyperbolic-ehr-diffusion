@@ -1,13 +1,5 @@
 USE mimic4;
 
--- This script builds the ICU cohort described in Johnson et al. (2023)
--- and exposes filtered tables as views. Replace VIEW with TABLE if you
--- want to materialize the data.
-
--- ---------
--- Checks
--- ---------
-
 -- Require discharge summaries from MIMIC-IV-Note.
 SET @discharge_exists := (
   SELECT COUNT(*)
@@ -19,12 +11,30 @@ SET @discharge_exists := (
 -- Fail fast if discharge summaries are unavailable.
 SET @require_discharge := CASE WHEN @discharge_exists = 0 THEN (1/0) ELSE 1 END;
 
+-- Require event_selected table for length cutoff.
+SET @event_selected_exists := (
+  SELECT COUNT(*)
+  FROM information_schema.tables
+  WHERE table_schema = DATABASE()
+    AND table_name = 'event_selected'
+);
+SET @require_event_selected := CASE WHEN @event_selected_exists = 0 THEN (1/0) ELSE 1 END;
+
 DROP TEMPORARY TABLE IF EXISTS discharge_summary_hadm;
 CREATE TEMPORARY TABLE discharge_summary_hadm AS
 SELECT DISTINCT hadm_id
 FROM discharge
 WHERE hadm_id IS NOT NULL
 ;
+
+-- Per-admission selected event length.
+DROP TEMPORARY TABLE IF EXISTS event_selected_lengths;
+CREATE TEMPORARY TABLE event_selected_lengths AS
+SELECT
+  hadm_id,
+  COUNT(*) AS len_selected
+FROM event_selected
+GROUP BY hadm_id;
 
 -- ICU stay counts and LOS checks.
 DROP TEMPORARY TABLE IF EXISTS icu_stay_counts;
@@ -45,25 +55,19 @@ CREATE TABLE llemr_cohort AS
 SELECT
   a.subject_id,
   a.hadm_id,
-  s.icu_stay_count
+  s.icu_stay_count,
+  COALESCE(es.len_selected, 0) AS len_selected
 FROM admissions a
 JOIN icu_stay_counts s
   ON s.hadm_id = a.hadm_id
 JOIN discharge_summary_hadm ds
   ON ds.hadm_id = a.hadm_id
+LEFT JOIN event_selected_lengths es
+  ON es.hadm_id = a.hadm_id
 WHERE a.dischtime >= a.admittime
-  AND s.icu_stay_count BETWEEN 1 AND 2
-  AND s.bad_icu_los = 0;
-
-ALTER TABLE llemr_cohort
-  ADD COLUMN split VARCHAR(10);
-
-UPDATE llemr_cohort
-SET split = CASE
-  WHEN MOD(CRC32(CAST(subject_id AS CHAR)), 10) = 0 THEN 'val'
-  WHEN MOD(CRC32(CAST(subject_id AS CHAR)), 10) = 1 THEN 'test'
-  ELSE 'train'
-END;
+  AND s.icu_stay_count = 1
+  AND s.bad_icu_los = 0
+  AND COALESCE(es.len_selected, 0) <= 1256.65;
 
 -- ------------------------
 -- Cohort-filtered views
@@ -157,8 +161,7 @@ SELECT
   a.admittime,
   a.dischtime,
   TIMESTAMPDIFF(HOUR, a.admittime, a.dischtime) AS hosp_los_hours,
-  a.hospital_expire_flag,
-  c.split
+  a.hospital_expire_flag
 FROM llemr_cohort c
 JOIN admissions a
   ON a.hadm_id = c.hadm_id;
@@ -172,12 +175,29 @@ SELECT
   admittime,
   dischtime,
   hosp_los_hours,
-  hospital_expire_flag AS label_mortality,
-  admittime AS window_start,
-  admittime + INTERVAL 48 HOUR AS window_end,
-  split
-FROM llemr_admission_windows
-WHERE hosp_los_hours >= 48;
+  label_mortality,
+  window_start,
+  window_end,
+  CASE
+    WHEN rn <= cnt * 0.8 THEN 'train'
+    WHEN rn <= cnt * 0.9 THEN 'val'
+    ELSE 'test'
+  END AS split
+FROM (
+  SELECT
+    subject_id,
+    hadm_id,
+    admittime,
+    dischtime,
+    hosp_los_hours,
+    hospital_expire_flag AS label_mortality,
+    admittime AS window_start,
+    admittime + INTERVAL 48 HOUR AS window_end,
+    ROW_NUMBER() OVER (PARTITION BY hospital_expire_flag ORDER BY RAND(42)) AS rn,
+    COUNT(*) OVER (PARTITION BY hospital_expire_flag) AS cnt
+  FROM llemr_admission_windows
+  WHERE hosp_los_hours >= 48
+) base;
 
 DROP TABLE IF EXISTS llemr_mortality_train;
 CREATE TABLE llemr_mortality_train AS
@@ -206,12 +226,34 @@ SELECT
   admittime,
   dischtime,
   hosp_los_hours,
-  CASE WHEN hosp_los_hours > 168 THEN 1 ELSE 0 END AS label_los_gt_7d,
-  admittime AS window_start,
-  admittime + INTERVAL 48 HOUR AS window_end,
-  split
-FROM llemr_admission_windows
-WHERE hosp_los_hours >= 48;
+  label_los_gt_7d,
+  window_start,
+  window_end,
+  CASE
+    WHEN rn <= cnt * 0.8 THEN 'train'
+    WHEN rn <= cnt * 0.9 THEN 'val'
+    ELSE 'test'
+  END AS split
+FROM (
+  SELECT
+    subject_id,
+    hadm_id,
+    admittime,
+    dischtime,
+    hosp_los_hours,
+    CASE WHEN hosp_los_hours > 168 THEN 1 ELSE 0 END AS label_los_gt_7d,
+    admittime AS window_start,
+    admittime + INTERVAL 48 HOUR AS window_end,
+    ROW_NUMBER() OVER (
+      PARTITION BY CASE WHEN hosp_los_hours > 168 THEN 1 ELSE 0 END
+      ORDER BY RAND(42)
+    ) AS rn,
+    COUNT(*) OVER (
+      PARTITION BY CASE WHEN hosp_los_hours > 168 THEN 1 ELSE 0 END
+    ) AS cnt
+  FROM llemr_admission_windows
+  WHERE hosp_los_hours >= 48
+) base;
 
 DROP TABLE IF EXISTS llemr_los_train;
 CREATE TABLE llemr_los_train AS
@@ -250,15 +292,41 @@ SELECT
   w.admittime,
   w.dischtime,
   w.hosp_los_hours,
+  label_readmit_14d,
   CASE
-    WHEN n.next_admittime IS NOT NULL
-      AND n.next_admittime <= w.dischtime + INTERVAL 14 DAY
-      THEN 1 ELSE 0 END AS label_readmit_14d,
-  w.split
-FROM llemr_admission_windows w
-JOIN llemr_next_admit n
-  ON n.hadm_id = w.hadm_id
-WHERE w.hospital_expire_flag = 0;
+    WHEN rn <= cnt * 0.8 THEN 'train'
+    WHEN rn <= cnt * 0.9 THEN 'val'
+    ELSE 'test'
+  END AS split
+FROM (
+  SELECT
+    w.subject_id,
+    w.hadm_id,
+    w.admittime,
+    w.dischtime,
+    w.hosp_los_hours,
+    CASE
+      WHEN n.next_admittime IS NOT NULL
+        AND n.next_admittime <= w.dischtime + INTERVAL 14 DAY
+        THEN 1 ELSE 0 END AS label_readmit_14d,
+    ROW_NUMBER() OVER (
+      PARTITION BY CASE
+        WHEN n.next_admittime IS NOT NULL
+          AND n.next_admittime <= w.dischtime + INTERVAL 14 DAY
+          THEN 1 ELSE 0 END
+      ORDER BY RAND(42)
+    ) AS rn,
+    COUNT(*) OVER (
+      PARTITION BY CASE
+        WHEN n.next_admittime IS NOT NULL
+          AND n.next_admittime <= w.dischtime + INTERVAL 14 DAY
+          THEN 1 ELSE 0 END
+    ) AS cnt
+  FROM llemr_admission_windows w
+  JOIN llemr_next_admit n
+    ON n.hadm_id = w.hadm_id
+  WHERE w.hospital_expire_flag = 0
+) base;
 
 DROP TABLE IF EXISTS llemr_readmission_train;
 CREATE TABLE llemr_readmission_train AS
