@@ -62,11 +62,14 @@ JOIN icu_stay_counts s
   ON s.hadm_id = a.hadm_id
 JOIN discharge_summary_hadm ds
   ON ds.hadm_id = a.hadm_id
+JOIN patients p
+  ON p.subject_id = a.subject_id
 LEFT JOIN event_selected_lengths es
   ON es.hadm_id = a.hadm_id
 WHERE a.dischtime >= a.admittime
   AND s.icu_stay_count = 1
   AND s.bad_icu_los = 0
+  AND (YEAR(a.admittime) - p.anchor_year + p.anchor_age) >= 18
   AND COALESCE(es.len_selected, 0) <= 1256.65;
 
 -- ------------------------
