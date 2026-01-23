@@ -16,7 +16,9 @@ class HyperbolicCodeEmbedding(nn.Module):
         code_ids: (...,) long
         returns: (..., dim) hyperbolic points
         """
-        return self.emb[code_ids]
+        x = self.emb[code_ids]
+        x = self.manifold.expmap0(self.manifold.logmap0(x))
+        return self.manifold.projx(x)
 
 
 class VisitEncoder(nn.Module):

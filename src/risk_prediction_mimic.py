@@ -420,6 +420,7 @@ class GraphHyperbolicVisitEncoderGlobal(nn.Module):
                 visit_vec = visit_vec + time_embeds[idx]
             if self.output_hyperbolic:
                 visit_vec = self.manifold.expmap0(visit_vec)
+                visit_vec = self.manifold.projx(visit_vec)
             visit_latents.append(visit_vec)
 
         return torch.stack(visit_latents, dim=0)   # [B*L, D] (hyperbolic if enabled)
@@ -702,7 +703,8 @@ def sample_latents_from_flow(
             h_prev = torch.where(mask_expand, new_h, h_prev)
 
     if output_hyperbolic and manifold is not None:
-        return manifold.expmap0(latents)
+        latents = manifold.expmap0(latents)
+        return manifold.projx(latents)
     return latents
 
 
@@ -1320,11 +1322,11 @@ def run_epoch(
             flat_visits, flat_deltas, B, L = flatten_visits_from_multihot(
                 padded_x, visit_mask, pad_idx=0, visit_deltas=visit_deltas
             )
-            latents_hyp = visit_enc(flat_visits, flat_deltas).to(device).view(B, L, -1)  # [B, L, D]
+            latents = visit_enc(flat_visits, flat_deltas).to(device).view(B, L, -1)  # [B, L, D]
             if getattr(visit_enc, "output_hyperbolic", False):
-                latents_tan = visit_enc.manifold.logmap0(latents_hyp)
+                latents_tan = visit_enc.manifold.logmap0(latents)
             else:
-                latents_tan = latents_hyp
+                latents_tan = latents
 
             if lambda_d > 0:
                 reps_real, h_seq = risk_lstm(latents_tan, visit_mask_bool, return_sequence=True)
@@ -1508,12 +1510,10 @@ def evaluate_risk(
             flat_visits, flat_deltas, B, L = flatten_visits_from_multihot(
                 padded_x, visit_mask, pad_idx=0, visit_deltas=visit_deltas
             )
-            latents_hyp = visit_enc(flat_visits, flat_deltas).to(device).view(B, L, -1)
+            latents = visit_enc(flat_visits, flat_deltas).to(device).view(B, L, -1)
             if getattr(visit_enc, "output_hyperbolic", False):
-                latents_tan = visit_enc.manifold.logmap0(latents_hyp)
-            else:
-                latents_tan = latents_hyp
-            h = risk_lstm(latents_tan, visit_mask.bool())
+                latents = visit_enc.manifold.logmap0(latents)
+            h = risk_lstm(latents, visit_mask.bool())
             logits = risk_head(h)
             probs = torch.sigmoid(logits)
 
