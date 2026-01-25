@@ -83,3 +83,5 @@ local_settings.py
 cache/
 
 llemr-main/
+
+*.err
