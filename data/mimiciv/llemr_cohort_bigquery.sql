@@ -184,3 +184,160 @@ FROM `mimic-iv-485411.hyperbolic_ehr.llemr_cohort_base` c
 LEFT JOIN `mimic-iv-485411.hyperbolic_ehr.event_selected_lengths` es
   ON es.hadm_id = c.hadm_id
 WHERE COALESCE(es.len_selected, 0) <= 1256.65;
+
+-- ------------------------
+-- Task cohorts (no splits)
+-- ------------------------
+
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_admission_windows` AS
+SELECT
+  c.subject_id,
+  c.hadm_id,
+  a.admittime,
+  a.dischtime,
+  DATETIME_DIFF(a.dischtime, a.admittime, HOUR) AS hosp_los_hours,
+  a.hospital_expire_flag
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_cohort` c
+JOIN `physionet-data.mimiciv_3_1_hosp.admissions` a
+  ON a.hadm_id = c.hadm_id;
+
+-- Mortality: LOS >= 48 hours, 48h window.
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_mortality` AS
+SELECT
+  subject_id,
+  hadm_id,
+  admittime,
+  dischtime,
+  hosp_los_hours,
+  hospital_expire_flag AS label_mortality,
+  admittime AS window_start,
+  DATETIME_ADD(admittime, INTERVAL 48 HOUR) AS window_end
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_admission_windows`
+WHERE hosp_los_hours >= 48;
+
+-- LOS: LOS >= 48 hours, label > 7 days, 48h window.
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_los` AS
+SELECT
+  subject_id,
+  hadm_id,
+  admittime,
+  dischtime,
+  hosp_los_hours,
+  IF(hosp_los_hours > 168, 1, 0) AS label_los_gt_7d,
+  admittime AS window_start,
+  DATETIME_ADD(admittime, INTERVAL 48 HOUR) AS window_end
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_admission_windows`
+WHERE hosp_los_hours >= 48;
+
+-- Readmission: exclude deceased, all events.
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_next_admit` AS
+SELECT
+  subject_id,
+  hadm_id,
+  admittime,
+  dischtime,
+  LEAD(admittime) OVER (PARTITION BY subject_id ORDER BY admittime) AS next_admittime
+FROM `physionet-data.mimiciv_3_1_hosp.admissions`;
+
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_readmission` AS
+SELECT
+  w.subject_id,
+  w.hadm_id,
+  w.admittime,
+  w.dischtime,
+  w.hosp_los_hours,
+  IF(n.next_admittime IS NOT NULL
+     AND n.next_admittime <= DATETIME_ADD(w.dischtime, INTERVAL 14 DAY), 1, 0) AS label_readmit_14d
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_admission_windows` w
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_next_admit` n
+  ON n.hadm_id = w.hadm_id
+WHERE w.hospital_expire_flag = 0;
+
+-- ------------------------
+-- Diagnosis phenotyping (requires uploaded CSVs)
+-- ------------------------
+
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_phenotype_icd10` AS
+SELECT DISTINCT
+  p.phenotype,
+  p.phenotype_type,
+  g.icd10cm AS icd10_code
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_phenotype_icd9` p
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_icd9_to_icd10_gem` g
+  ON g.icd9cm = p.icd9_code
+WHERE g.no_map = 0;
+
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_diagnosis_labels` AS
+SELECT DISTINCT
+  c.subject_id,
+  d.hadm_id,
+  COALESCE(p9.phenotype, p10.phenotype) AS phenotype
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_cohort` c
+JOIN `physionet-data.mimiciv_3_1_hosp.diagnoses_icd` d
+  ON d.hadm_id = c.hadm_id
+LEFT JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_phenotype_icd9` p9
+  ON d.icd_version = 9
+  AND d.icd_code = p9.icd9_code
+LEFT JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_phenotype_icd10` p10
+  ON d.icd_version = 10
+  AND d.icd_code = p10.icd10_code
+WHERE COALESCE(p9.phenotype, p10.phenotype) IS NOT NULL;
+
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_diagnosis` AS
+SELECT
+  c.subject_id,
+  c.hadm_id,
+  MAX(CASE WHEN l.phenotype = 'Septicemia (except in labor)' THEN 1 ELSE 0 END) AS label_septicemia,
+  MAX(CASE WHEN l.phenotype = 'Diabetes mellitus without complication' THEN 1 ELSE 0 END)
+    AS label_diabetes_without_complication,
+  MAX(CASE WHEN l.phenotype = 'Diabetes mellitus with complications' THEN 1 ELSE 0 END)
+    AS label_diabetes_with_complications,
+  MAX(CASE WHEN l.phenotype = 'Disorders of lipid metabolism' THEN 1 ELSE 0 END)
+    AS label_lipid_disorders,
+  MAX(CASE WHEN l.phenotype = 'Fluid and electrolyte disorders' THEN 1 ELSE 0 END)
+    AS label_fluid_electrolyte_disorders,
+  MAX(CASE WHEN l.phenotype = 'Essential hypertension' THEN 1 ELSE 0 END)
+    AS label_essential_hypertension,
+  MAX(CASE WHEN l.phenotype = 'Hypertension with complications and secondary hypertension' THEN 1 ELSE 0 END)
+    AS label_hypertension_with_complications,
+  MAX(CASE WHEN l.phenotype = 'Acute myocardial infarction' THEN 1 ELSE 0 END)
+    AS label_acute_myocardial_infarction,
+  MAX(CASE WHEN l.phenotype = 'Coronary atherosclerosis and other heart disease' THEN 1 ELSE 0 END)
+    AS label_coronary_atherosclerosis,
+  MAX(CASE WHEN l.phenotype = 'Conduction disorders' THEN 1 ELSE 0 END)
+    AS label_conduction_disorders,
+  MAX(CASE WHEN l.phenotype = 'Cardiac dysrhythmias' THEN 1 ELSE 0 END)
+    AS label_cardiac_dysrhythmias,
+  MAX(CASE WHEN l.phenotype = 'Congestive heart failure; nonhypertensive' THEN 1 ELSE 0 END)
+    AS label_congestive_heart_failure,
+  MAX(CASE WHEN l.phenotype = 'Acute cerebrovascular disease' THEN 1 ELSE 0 END)
+    AS label_acute_cerebrovascular_disease,
+  MAX(CASE WHEN l.phenotype =
+    'Pneumonia (except that caused by tuberculosis or sexually transmitted disease)' THEN 1 ELSE 0 END)
+    AS label_pneumonia,
+  MAX(CASE WHEN l.phenotype = 'Chronic obstructive pulmonary disease and bronchiectasis' THEN 1 ELSE 0 END)
+    AS label_copd_bronchiectasis,
+  MAX(CASE WHEN l.phenotype = 'Pleurisy; pneumothorax; pulmonary collapse' THEN 1 ELSE 0 END)
+    AS label_pleurisy_pneumothorax_collapse,
+  MAX(CASE WHEN l.phenotype = 'Respiratory failure; insufficiency; arrest (adult)' THEN 1 ELSE 0 END)
+    AS label_respiratory_failure,
+  MAX(CASE WHEN l.phenotype = 'Other lower respiratory disease' THEN 1 ELSE 0 END)
+    AS label_other_lower_respiratory,
+  MAX(CASE WHEN l.phenotype = 'Other upper respiratory disease' THEN 1 ELSE 0 END)
+    AS label_other_upper_respiratory,
+  MAX(CASE WHEN l.phenotype = 'Other liver diseases' THEN 1 ELSE 0 END)
+    AS label_other_liver_disease,
+  MAX(CASE WHEN l.phenotype = 'Gastrointestinal hemorrhage' THEN 1 ELSE 0 END)
+    AS label_gi_hemorrhage,
+  MAX(CASE WHEN l.phenotype = 'Acute and unspecified renal failure' THEN 1 ELSE 0 END)
+    AS label_acute_renal_failure,
+  MAX(CASE WHEN l.phenotype = 'Chronic kidney disease' THEN 1 ELSE 0 END)
+    AS label_chronic_kidney_disease,
+  MAX(CASE WHEN l.phenotype = 'Complications of surgical procedures or medical care' THEN 1 ELSE 0 END)
+    AS label_surgical_medical_complications,
+  MAX(CASE WHEN l.phenotype = 'Shock' THEN 1 ELSE 0 END)
+    AS label_shock
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_cohort` c
+LEFT JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_diagnosis_labels` l
+  ON l.hadm_id = c.hadm_id
+GROUP BY c.subject_id, c.hadm_id;
