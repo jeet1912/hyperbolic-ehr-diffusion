@@ -166,15 +166,21 @@ def print_summary_table(records: List[dict]):
     rows = []
     for rec in records:
         metrics = rec.get("risk_metrics") or {}
+        auroc = metrics.get("auroc")
+        auprc = metrics.get("auprc")
+        if auroc is None and "auroc_macro" in metrics:
+            auroc = metrics.get("auroc_macro")
+        if auprc is None and "auprc_macro" in metrics:
+            auprc = metrics.get("auprc_macro")
         rows.append(
             [
                 str(rec.get("run_index", "")),
                 rec.get("experiment_name", ""),
                 fmt(rec.get("best_val_loss", 0.0)),
-                fmt(metrics.get("auroc", 0.0)),
-                fmt(metrics.get("auprc", 0.0)),
+                fmt(auroc),
+                fmt(auprc),
                 fmt(metrics.get("accuracy", 0.0)),
-                fmt(metrics.get("f1", 0.0)),
+                fmt(metrics.get("f1", metrics.get("f1_macro", 0.0))),
                 fmt(rec.get("diffusion_latent_spearman")),
                 fmt(rec.get("tree_latent_spearman")),
                 fmt(rec.get("distortion_depth_mean")),
@@ -1401,6 +1407,37 @@ def binary_classification_metrics(y_true, y_prob, threshold=0.5):
     }
 
 
+def multilabel_metrics(y_true, y_prob, threshold=0.5):
+    y_true = np.asarray(y_true).astype(int)
+    y_prob = np.asarray(y_prob)
+    if y_true.ndim != 2:
+        raise ValueError("multilabel_metrics expects 2D arrays")
+
+    num_labels = y_true.shape[1]
+    per_label_auroc = []
+    per_label_auprc = []
+    per_label_f1 = []
+    for i in range(num_labels):
+        metrics = binary_classification_metrics(
+            y_true[:, i], y_prob[:, i], threshold=threshold
+        )
+        per_label_auroc.append(metrics["auroc"])
+        per_label_auprc.append(metrics["auprc"])
+        per_label_f1.append(metrics["f1"])
+
+    micro_auroc = auroc_score(y_true.ravel(), y_prob.ravel())
+    micro_auprc = auprc_score(y_true.ravel(), y_prob.ravel())
+
+    return {
+        "auroc_macro": float(np.mean(per_label_auroc)) if per_label_auroc else 0.0,
+        "auprc_macro": float(np.mean(per_label_auprc)) if per_label_auprc else 0.0,
+        "f1_macro": float(np.mean(per_label_f1)) if per_label_f1 else 0.0,
+        "auroc_micro": float(micro_auroc),
+        "auprc_micro": float(micro_auprc),
+        "per_label_auprc": per_label_auprc,
+    }
+
+
 # ----------------------------- Training / Eval Loops ----------------------------- #
 
 def run_epoch(
@@ -1657,7 +1694,10 @@ def evaluate_risk(
 
     y_true = np.concatenate(all_labels, axis=0)
     y_prob = np.concatenate(all_probs, axis=0)
-    metrics = binary_classification_metrics(y_true, y_prob, threshold=0.5)
+    if y_true.ndim == 2:
+        metrics = multilabel_metrics(y_true, y_prob, threshold=0.5)
+    else:
+        metrics = binary_classification_metrics(y_true, y_prob, threshold=0.5)
     return metrics
 
 def group_split_indices(subject_ids, train_frac=0.7, val_frac=0.15, seed=42):

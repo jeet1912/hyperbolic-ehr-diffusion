@@ -156,4 +156,4 @@ embeddings (after diffusion) to visualize clustering/geometry. They are qualitat
 
 **Recommended metrics by task:**
 - Mortality / LOS / Readmission (binary): AUROC + AUPRC (report both), F1/Accuracy as secondary.
-- Diagnosis (multi-label): micro/macro AUROC and micro/macro AUPRC; per-label AUPRC for rare codes.
+- Diagnosis (multi-label): macro AUROC/AUPRC (primary) + micro AUROC/AUPRC (secondary); per-label AUPRC for rare codes. The script reports macro/micro metrics for diagnosis tasks automatically.
