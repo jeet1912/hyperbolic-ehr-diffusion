@@ -151,8 +151,7 @@ def print_summary_table(records: List[dict]):
         return
 
     headers = [
-        "Run", "Experiment", "ValLoss", "AUROC", "AUPRC", "Accuracy", "F1",
-        "Diff–Lat ρ", "Tree–Lat ρ", "Dist μ", "Dist σ"
+        "Run", "Experiment", "ValLoss", "AUROC", "AUPRC", "Accuracy", "F1"
     ]
 
     def fmt(x, nd=4):
@@ -181,10 +180,6 @@ def print_summary_table(records: List[dict]):
                 fmt(auprc),
                 fmt(metrics.get("accuracy", 0.0)),
                 fmt(metrics.get("f1", metrics.get("f1_macro", 0.0))),
-                fmt(rec.get("diffusion_latent_spearman")),
-                fmt(rec.get("tree_latent_spearman")),
-                fmt(rec.get("distortion_depth_mean")),
-                fmt(rec.get("distortion_depth_std")),
             ]
         )
 
@@ -1753,31 +1748,22 @@ def main():
                         help="Directory for checkpoints.")
     parser.add_argument("--plot-dir", type=str, default="results/plots",
                         help="Directory for training curves.")
-    parser.add_argument("--umap", action="store_true",
-                        help="Generate UMAP plots for diffusion embeddings.")
-    parser.add_argument("--umap-max-points", type=int, default=0,
-                        help="If >0, subsample at most this many codes for UMAP.")
     parser.add_argument("--icd-tree", type=str, default=None,
                         help="Path to ICD tree file (child,parent per line or JSON mapping).")
+    # Ablation/metric CLI args (commented out for final-only runs)
+    # parser.add_argument("--umap", action="store_true",
+    #                     help="Generate UMAP plots for diffusion embeddings.")
+    # parser.add_argument("--umap-max-points", type=int, default=0,
+    #                     help="If >0, subsample at most this many codes for UMAP.")
     parser.add_argument(
         "--icd10-gem",
         type=str,
         default="data/icd9toicd10cmgem.csv",
         help="GEM crosswalk CSV used to map ICD10 codes to ICD9 for tree metrics.",
     )
-    parser.add_argument("--metric-pairs", type=int, default=5000,
-                        help="Number of random code pairs for tree/diffusion metrics.")
-    parser.add_argument("--metric-seed", type=int, default=42,
-                        help="Random seed for tree/diffusion metric sampling.")
-    parser.add_argument("--tree-metric-debug", action="store_true",
-                        help="Print detailed tree metric debug stats.")
     args = parser.parse_args()
 
-    if not args.icd_tree:
-        parser.error(
-            "Missing --icd-tree. Build it first with "
-            "scripts/icd9/build_icd9_parent_map.py and pass the CSV path."
-        )
+    # ICD tree is optional when only final task metrics are reported.
 
     device = torch.device(
         "cuda"
@@ -1825,53 +1811,13 @@ def main():
 
     idx_to_code = {idx: code for code, idx in dataset.code_map.items() if idx != 0}
     valid_code_indices = sorted(idx_to_code.keys())
-    codes = list(idx_to_code.values())
-    corr_cache_dir = os.path.join("results", "cache")
-    corr_seeds = [41, 42, 43, 44, 45]
-    corr_pair_sets = []
-    corr_pair_paths = []
-    for seed in corr_seeds:
-        filename = (
-            f"mimic_corr_pairs_{args.metric_pairs}_seed{seed}_n{len(valid_code_indices)}.npy"
-        )
-        path = os.path.join(corr_cache_dir, filename)
-        corr_pair_sets.append(
-            get_corr_pairs(args.metric_pairs, path, valid_code_indices, seed=seed)
-        )
-        corr_pair_paths.append(path)
-    try:
-        parent_map = load_icd_parent_map(args.icd_tree)
-    except Exception as exc:
-        raise RuntimeError(
-            "Failed to load ICD tree. Run scripts/icd9/build_icd9_parent_map.py "
-            "and pass the generated CSV via --icd-tree."
-        ) from exc
-
-    icd10_to_icd9 = load_icd10_to_icd9_gem(args.icd10_gem)
-    icd_code_map = build_icd9_tree_map(codes, icd10_to_icd9)
-    idx_to_tree_code = {
-        idx: icd_code_map[code]
-        for idx, code in idx_to_code.items()
-        if code in icd_code_map
-    }
-    tree_codes = list(idx_to_tree_code.values())
-    tree_source = "icd9+gem"
-
-    for code in tree_codes:
-        parent_map.setdefault(code, ROOT_CODE)
-
-    ancestor_paths, depth_map = build_ancestor_paths(tree_codes, parent_map)
-    print(
-        f"[HyperMedDiff-Risk] ICD tree source: {tree_source} | "
-        f"tree_codes={len(depth_map)} | total_codes={len(codes)}"
-    )
 
     os.makedirs(args.plot_dir, exist_ok=True)
     os.makedirs(args.output, exist_ok=True)
 
-    experiments = get_ablation_configs()
-
-    print(f"[HyperMedDiff-Risk] Running {len(experiments)} ablation configurations.")
+    # Experiments (ablations) disabled; final model only.
+    # experiments = get_ablation_configs()
+    experiments = [("Final", BASELINE_CONFIG)]
     summary_records = []
 
     for run_idx, (exp_name, config) in enumerate(experiments, start=1):
@@ -1912,15 +1858,6 @@ def main():
 
         freeze_code_emb = config.get("freeze_code_emb", True)
         faithfulness_prefix = "Frozen-code" if freeze_code_emb else "Code"
-        pre_faith_mean, pre_faith_std, pre_faith_values = diffusion_embedding_faithfulness_stats(
-            code_emb,
-            diffusion_metric,
-            corr_pair_sets,
-        )
-        print(
-            f"[HyperMedDiff-Risk] {faithfulness_prefix} diffusion faithfulness "
-            f"(post-pretrain eval): {pre_faith_mean:.4f} ± {pre_faith_std:.4f}"
-        )
         if freeze_code_emb:
             for p in code_emb.parameters():
                 p.requires_grad = False
@@ -1989,106 +1926,65 @@ def main():
         print("[HyperMedDiff-Risk] Test risk metrics (MedDiffusion-style):")
         print(json.dumps(risk_metrics, indent=2))
 
-        post_faith_mean, post_faith_std, post_faith_values = diffusion_embedding_faithfulness_stats(
-            code_emb,
-            diffusion_metric,
-            corr_pair_sets,
-        )
-        print(
-            f"[HyperMedDiff-Risk] {faithfulness_prefix} diffusion faithfulness "
-            f"(post-train eval): {post_faith_mean:.4f} ± {post_faith_std:.4f}"
-        )
-
-        diff_spearman = diffusion_embedding_spearman(
-            code_emb,
-            diffusion_metric,
-            device,
-            num_pairs=args.metric_pairs,
-            seed=args.metric_seed,
-            valid_indices=valid_code_indices,
-        )
-        print(f"[HyperMedDiff-Risk] Diffusion/embedding Spearman rho: {diff_spearman:.4f}")
-
-        tree_spearman = None
-        distortion_stats = None
-        distortion_path = None
-        tree_dists, latent_dists, lca_depths, tree_debug = sample_tree_latent_pairs(
-            code_emb,
-            idx_to_tree_code,
-            ancestor_paths,
-            depth_map,
-            device,
-            num_pairs=args.metric_pairs,
-            seed=args.metric_seed,
-        )
-        if tree_debug:
-            kept = tree_debug.get("kept", 0)
-            summary = (
-                f"kept={kept} | "
-                f"same={tree_debug.get('skipped_same', 0)} | "
-                f"missing_code={tree_debug.get('skipped_missing_code', 0)} | "
-                f"missing_path={tree_debug.get('skipped_missing_path', 0)} | "
-                f"bad_lca={tree_debug.get('skipped_bad_lca', 0)} | "
-                f"tree_dist_le0={tree_debug.get('skipped_tree_dist_le0', 0)}"
-            )
-            if args.tree_metric_debug:
-                hist = dict(sorted(tree_debug.get("lca_depth_histogram", {}).items()))
-                print(f"[HyperMedDiff-Risk] Tree metric debug: {summary}")
-                print(f"[HyperMedDiff-Risk] LCA depth histogram: {hist}")
-            else:
-                print(f"[HyperMedDiff-Risk] Tree metric debug summary: {summary}")
-            if kept:
-                lca0 = tree_debug.get("lca_depth_histogram", {}).get(0, 0)
-                if lca0 / kept > 0.8:
-                    print("[HyperMedDiff-Risk] Warning: >80% of kept pairs have LCA depth 0.")
-
-        if tree_dists is not None:
-            tree_label = tree_source
-            tree_spearman = spearman_corr(tree_dists, latent_dists)
-            print(
-                f"[HyperMedDiff-Risk] Tree/embedding Spearman rho ({tree_label}): {tree_spearman:.4f}"
-            )
-            distortion_stats = distortion_stats_by_depth(tree_dists, latent_dists, lca_depths)
-            if distortion_stats:
-                print("[HyperMedDiff-Risk] Distortion by depth (depth,count,mean,std):")
-                for entry in distortion_stats:
-                    print(
-                        f"[HyperMedDiff-Risk] depth={entry['depth']} "
-                        f"count={entry['count']} "
-                        f"mean={entry['mean_ratio']:.4f} "
-                        f"std={entry['std_ratio']:.4f}"
-                    )
-            distortion_path = os.path.join(args.plot_dir, f"{exp_name}_distortion_depth.png")
-            distortion_title = (
-                f"MIMICIII | {exp_name} | Distortion vs LCA Depth | tree={tree_label}"
-            )
-            if plot_distortion_vs_depth(distortion_stats, distortion_path, distortion_title):
-                print(f"[HyperMedDiff-Risk] Saved distortion vs depth plot to {distortion_path}")
-        else:
-            print("[HyperMedDiff-Risk] Tree metrics skipped (insufficient pairs).")
-
-        if args.umap:
-            visit_enc.eval()
-            with torch.no_grad():
-                base = visit_enc.code_emb.emb
-                X_hyp = base.weight if isinstance(base, nn.Embedding) else base
-                diff_embeds = visit_enc.diff_layer(X_hyp)
-                if diff_embeds.size(0) > 1:
-                    diff_embeds = diff_embeds[1:]
-                else:
-                    diff_embeds = diff_embeds[:0]
-
-            umap_path = os.path.join(args.plot_dir, f"{exp_name}_umap.png")
-            umap_title = (
-                f"MIMICIII | {exp_name} | Diffusion Embeddings UMAP | "
-                f"diffusion_steps={'-'.join(str(d) for d in config['diffusion_steps'])} | "
-                f"embed_dim={config['embed_dim']}"
-            )
-            max_points = args.umap_max_points if args.umap_max_points > 0 else None
-            if plot_umap_embeddings(
-                diff_embeds, umap_path, umap_title, max_points=max_points, seed=42
-            ):
-                print(f"[HyperMedDiff-Risk] Saved diffusion embedding UMAP to {umap_path}")
+        # Diffusion/tree/UMAP metrics disabled for final performance runs.
+        # The original metric block is preserved here (commented out).
+        # post_faith_mean, post_faith_std, post_faith_values = diffusion_embedding_faithfulness_stats(
+        #     code_emb,
+        #     diffusion_metric,
+        #     corr_pair_sets,
+        # )
+        # print(
+        #     f"[HyperMedDiff-Risk] {faithfulness_prefix} diffusion faithfulness "
+        #     f"(post-train eval): {post_faith_mean:.4f} ± {post_faith_std:.4f}"
+        # )
+        #
+        # diff_spearman = diffusion_embedding_spearman(
+        #     code_emb,
+        #     diffusion_metric,
+        #     device,
+        #     num_pairs=args.metric_pairs,
+        #     seed=args.metric_seed,
+        #     valid_indices=valid_code_indices,
+        # )
+        # print(f"[HyperMedDiff-Risk] Diffusion/embedding Spearman rho: {diff_spearman:.4f}")
+        #
+        # tree_spearman = None
+        # distortion_stats = None
+        # distortion_path = None
+        # tree_dists, latent_dists, lca_depths, tree_debug = sample_tree_latent_pairs(
+        #     code_emb,
+        #     idx_to_tree_code,
+        #     ancestor_paths,
+        #     depth_map,
+        #     device,
+        #     num_pairs=args.metric_pairs,
+        #     seed=args.metric_seed,
+        # )
+        # if tree_dists is not None:
+        #     tree_label = tree_source
+        #     tree_spearman = spearman_corr(tree_dists, latent_dists)
+        #     distortion_stats = distortion_stats_by_depth(tree_dists, latent_dists, lca_depths)
+        #     distortion_path = os.path.join(args.plot_dir, f"{exp_name}_distortion_depth.png")
+        #     distortion_title = (
+        #         f"MIMICIII | {exp_name} | Distortion vs LCA Depth | tree={tree_label}"
+        #     )
+        #     plot_distortion_vs_depth(distortion_stats, distortion_path, distortion_title)
+        #
+        # if args.umap:
+        #     visit_enc.eval()
+        #     with torch.no_grad():
+        #         base = visit_enc.code_emb.emb
+        #         X_hyp = base.weight if isinstance(base, nn.Embedding) else base
+        #         diff_embeds = visit_enc.diff_layer(X_hyp)
+        #         diff_embeds = diff_embeds[1:] if diff_embeds.size(0) > 1 else diff_embeds[:0]
+        #     umap_path = os.path.join(args.plot_dir, f"{exp_name}_umap.png")
+        #     umap_title = (
+        #         f"MIMICIII | {exp_name} | Diffusion Embeddings UMAP | "
+        #         f"diffusion_steps={'-'.join(str(d) for d in config['diffusion_steps'])} | "
+        #         f"embed_dim={config['embed_dim']}"
+        #     )
+        #     max_points = args.umap_max_points if args.umap_max_points > 0 else None
+        #     plot_umap_embeddings(diff_embeds, umap_path, umap_title, max_points=max_points, seed=42)
 
         ckpt_path = os.path.join(args.output, f"{exp_name}.pt")
         torch.save(
@@ -2107,28 +2003,12 @@ def main():
                 "train_lr": config["train_lr"],
                 "train_epochs": config["train_epochs"],
                 "best_val_loss": best_val,
-                "pretrain_diffusion_faithfulness_mean": pre_faith_mean,
-                "pretrain_diffusion_faithfulness_std": pre_faith_std,
-                "pretrain_diffusion_faithfulness_values": pre_faith_values,
-                "posttrain_diffusion_faithfulness_mean": post_faith_mean,
-                "posttrain_diffusion_faithfulness_std": post_faith_std,
-                "posttrain_diffusion_faithfulness_values": post_faith_values,
-                "diffusion_faithfulness_pair_seeds": corr_seeds,
-                "diffusion_faithfulness_pair_paths": corr_pair_paths,
-                "diffusion_latent_spearman": diff_spearman,
-                "tree_latent_spearman": tree_spearman,
-                "distortion_by_depth": distortion_stats,
-                "distortion_plot_path": distortion_path,
-                "icd_tree_source": tree_source,
-                "metric_pairs": args.metric_pairs,
-                "metric_seed": args.metric_seed,
                 "risk_metrics": risk_metrics,
             },
             ckpt_path,
         )
         print(f"Saved checkpoint to {ckpt_path}")
 
-        dist_mean, dist_std = aggregate_distortion_stats(distortion_stats)
         summary_records.append(
             {
                 "run_index": run_idx,
@@ -2136,13 +2016,7 @@ def main():
                 "hyperparameters": copy.deepcopy(config),
                 "best_val_loss": best_val,
                 "risk_metrics": risk_metrics,
-                # Faithfulness metrics
-                "diffusion_latent_spearman": diff_spearman,
-                "tree_latent_spearman": tree_spearman,
-                "distortion_depth_mean": dist_mean,
-                "distortion_depth_std": dist_std,
                 "plot_path": plot_path,
-                "distortion_plot_path": distortion_path,
                 "checkpoint_path": ckpt_path,
             }
         )
