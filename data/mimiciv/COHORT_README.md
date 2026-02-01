@@ -25,6 +25,34 @@ Sequence preprocessing for RETAIN/MedDiffusion/my model:
 
 Canonical task export format (BigQuery `*_task` tables) includes: subject_id, hadm_id, task_name, label(s), t_pred_hours, event_time_hours, event_time_avail_hours, code, code_system, event_type, event_value. Codes are controlled identifiers (ICD9/10, LAB/INPUT/OUTPUT/PROC item IDs, NDC for drugs, MICRO test_itemid). Free-text is only kept in `event_value` for Llemr; sequence models use `code`.
 
+## Code hierarchy used by the model (ICD only)
+
+For LLemr cohorts, the `code` field mixes ICD9/ICD10 diagnosis codes with other structured codes
+(LAB, INPUT/OUTPUT/PROC, NDC, MICRO). In `src/risk_prediction_mimic.py`, the hierarchy is an ICD
+tree provided via `--icd-tree` (e.g., `data/mimiciii/icd9_parent_map.csv`). This hierarchy applies
+only to ICD codes; non-ICD codes are treated as flat tokens.
+
+Example ICD hierarchy (broad -> specific):
+
+```
+Root
+└─ ICD9
+   └─ 390–459 (Circulatory system)
+      └─ 410 (Acute myocardial infarction)
+         └─ 410.0 (AMI of anterolateral wall)
+            └─ 410.01 (initial episode of care)
+```
+
+And ICD10:
+
+```
+Root
+└─ ICD10
+   └─ I00–I99 (Diseases of the circulatory system)
+      └─ I21 (Acute myocardial infarction)
+         └─ I21.0 (STEMI of anterior wall)
+```
+
 ## End-to-end rebuild steps (BigQuery -> CSVs -> PKLs)
 
 1) Run the BigQuery build script (creates/overwrites tables + exports task CSVs):
