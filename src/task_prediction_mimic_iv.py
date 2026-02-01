@@ -26,7 +26,7 @@ from regularizers import radius_regularizer
 
 BATCH_SIZE = 32
 TRAIN_LR = 1e-4
-TRAIN_EPOCHS = 100
+TRAIN_EPOCHS = 50
 EARLY_STOP_PATIENCE = 5
 
 EMBED_DIM = 128
