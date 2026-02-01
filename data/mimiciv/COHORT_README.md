@@ -24,3 +24,68 @@ Sequence preprocessing for RETAIN/MedDiffusion/my model:
 - For mortality/LOS, T is fixed at `ceil(48 / bin_hours)`; for readmission/diagnosis I truncate to a max T (newest-first).
 
 Canonical task export format (BigQuery `*_task` tables) includes: subject_id, hadm_id, task_name, label(s), t_pred_hours, event_time_hours, event_time_avail_hours, code, code_system, event_type, event_value. Codes are controlled identifiers (ICD9/10, LAB/INPUT/OUTPUT/PROC item IDs, NDC for drugs, MICRO test_itemid). Free-text is only kept in `event_value` for Llemr; sequence models use `code`.
+
+## End-to-end rebuild steps (BigQuery -> CSVs -> PKLs)
+
+1) Run the BigQuery build script (creates/overwrites tables + exports task CSVs):
+
+```bash
+bq --location=US query --use_legacy_sql=false < data/mimiciv/llemr_cohort_bigquery.sql
+```
+
+2) Export the base cohort table (not exported by the script):
+
+```bash
+bq --location=US query --use_legacy_sql=false <<'SQL'
+EXPORT DATA OPTIONS (
+  uri = 'gs://mimiciv-exports-485411/llemr_cohort_*.csv',
+  format = 'CSV',
+  overwrite = true,
+  header = true
+) AS
+SELECT * FROM `mimic-iv-485411.hyperbolic_ehr.llemr_cohort`;
+SQL
+```
+
+3) Download all exported shards from GCS:
+
+```bash
+mkdir -p data/mimiciv/gcs_exports
+gsutil -m cp "gs://mimiciv-exports-485411/llemr_*_*.csv" data/mimiciv/gcs_exports/
+```
+
+4) Merge shards into single local CSVs:
+
+```bash
+python3 - <<'PY'
+import glob, pandas as pd
+
+def combine(prefix, out_path):
+    parts = sorted(glob.glob(f"data/mimiciv/gcs_exports/{prefix}_*.csv"))
+    if not parts:
+        raise SystemExit(f"missing shards for {prefix}")
+    df = pd.concat((pd.read_csv(p) for p in parts), ignore_index=True)
+    df.to_csv(out_path, index=False)
+    print(f"[wrote] {out_path} rows={len(df)}")
+
+combine("llemr_cohort", "data/mimiciv/llemr_cohort.csv")
+combine("llemr_mortality_task", "data/mimiciv/llemr_mortality_task.csv")
+combine("llemr_los_task", "data/mimiciv/llemr_los_task.csv")
+combine("llemr_readmission_task", "data/mimiciv/llemr_readmission_task.csv")
+combine("llemr_diagnosis_task", "data/mimiciv/llemr_diagnosis_task.csv")
+PY
+```
+
+5) Build PKLs for RETAIN/MedDiffusion/our model:
+
+```bash
+python3 data/mimiciv/create_task_pkls.py --task mortality --input-dir data/mimiciv --output-dir data/mimiciv/pkl --cohort-path data/mimiciv/llemr_cohort.csv
+python3 data/mimiciv/create_task_pkls.py --task los        --input-dir data/mimiciv --output-dir data/mimiciv/pkl --cohort-path data/mimiciv/llemr_cohort.csv
+python3 data/mimiciv/create_task_pkls.py --task readmission --input-dir data/mimiciv --output-dir data/mimiciv/pkl --cohort-path data/mimiciv/llemr_cohort.csv
+python3 data/mimiciv/create_task_pkls.py --task diagnosis   --input-dir data/mimiciv --output-dir data/mimiciv/pkl --cohort-path data/mimiciv/llemr_cohort.csv
+```
+
+Notes:
+- The BigQuery script exports only the `llemr_*_task` tables; the base cohort export must be run separately (step 2).
+- LLemr uses the merged `llemr_*_task.csv` files directly. RETAIN/MedDiffusion/our model use the PKLs from step 5.
+- Readmission/diagnosis PKLs are large (multihot tensors). If you hit "No space left on device", free disk space or set `--output-dir` to a larger drive before rerunning those tasks.

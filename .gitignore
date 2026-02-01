@@ -85,3 +85,4 @@ cache/
 llemr-main/
 
 *.err
+*.pkl
