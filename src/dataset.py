@@ -260,6 +260,12 @@ class MimicCsvDataset(Dataset):
         self.y = y
         self.subject_id = subject_ids
         self.hadm_id = hadm_ids
+        self.split = [split_map[int(hadm_to_subject[h])] for h in hadm_ids]
+        self.split_indices = {
+            "train": [i for i, s in enumerate(self.split) if s == "train"],
+            "val": [i for i, s in enumerate(self.split) if s == "val"],
+            "test": [i for i, s in enumerate(self.split) if s == "test"],
+        }
 
         print(
             f"[MIMIC] Admissions: {len(self.x)} | Vocab size: {self.vocab_size}"

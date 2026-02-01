@@ -24,7 +24,7 @@ from regularizers import radius_regularizer
 
 # ----------------------------- Hyperparams ----------------------------- #
 
-BATCH_SIZE = 32
+BATCH_SIZE = 8
 TRAIN_LR = 1e-4
 TRAIN_EPOCHS = 50
 EARLY_STOP_PATIENCE = 5
@@ -1792,7 +1792,9 @@ def main():
     )
     collate_fn = make_pad_collate(dataset.vocab_size)
 
-    train_idx, val_idx, test_idx = group_split_indices(dataset.subject_id, seed=42)
+    train_idx = dataset.split_indices["train"]
+    val_idx = dataset.split_indices["val"]
+    test_idx = dataset.split_indices["test"]
     train_ds = torch.utils.data.Subset(dataset, train_idx)
     val_ds   = torch.utils.data.Subset(dataset, val_idx)
     test_ds  = torch.utils.data.Subset(dataset, test_idx)
