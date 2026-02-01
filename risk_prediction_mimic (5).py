@@ -379,8 +379,9 @@ class GraphHyperbolicVisitEncoderGlobal(nn.Module):
         self.time_freq = nn.Linear(1, self.dim)
         self.time_proj = nn.Linear(self.dim, self.dim)
         self.output_hyperbolic = output_hyperbolic
+        #FIX A1: Add a learnable scaling factor so the model can learn what bounds to scale the embeddings within.
         self.scale_factor = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
-
+    
     def forward(
         self,
         flat_visits: Sequence[torch.Tensor],
@@ -392,10 +393,14 @@ class GraphHyperbolicVisitEncoderGlobal(nn.Module):
             X_hyp = base.weight
         else:
             device = base.device
-            X_hyp = base
+            X_hyp = base 
 
+        #FIX A2: Scale down the embeddings with initialized learnable scaling factor to prevent explosion (avoid NaN values)
         X_hyp = X_hyp * torch.tanh(self.scale_factor)
-        # X_hyp = self.manifold.projx(X_hyp)
+
+        #FIX B:(OPTIONAL ONLY IF NAN values in printing below) Reproject to ensure the points are on the manifold (I understand its already projected in the init of HyperbolicCodeEmbedding)
+        #X_hyp = self.manifold.projx(X_hyp)
+        # Print to check if our embeddings are still NaN, if they are NaN uncomment above line
         if torch.isnan(X_hyp).any():
             print("[WARNING] NaN in code embeddings after projx")
 
