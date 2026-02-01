@@ -40,6 +40,8 @@ CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.event_selected` AS
 SELECT
   c.hadm_id,
   'patient_demographics' AS event_type,
+  CONCAT('DEMO:AGEBIN:', CAST(FLOOR((EXTRACT(YEAR FROM a.admittime) - p.anchor_year + p.anchor_age) / 10) * 10 AS STRING)) AS event_code,
+  'DEMO' AS code_system,
   0.0 AS timestamp,
   CONCAT(
     'gender: ', p.gender,
@@ -60,6 +62,8 @@ UNION ALL
 SELECT
   c.hadm_id,
   'admission_info' AS event_type,
+  CONCAT('ADM:TYPE:', a.admission_type) AS event_code,
+  'ADM' AS code_system,
   0.0 AS timestamp,
   CONCAT('type: ', a.admission_type, ', location: ', a.admission_location) AS event_value,
   0.0 AS timestamp_avail
@@ -71,6 +75,8 @@ UNION ALL
 SELECT
   l.hadm_id,
   'labevents' AS event_type,
+  CONCAT('LAB:', CAST(l.itemid AS STRING)) AS event_code,
+  'LAB' AS code_system,
   DATETIME_DIFF(l.charttime, a.admittime, SECOND) / 3600.0 AS timestamp,
   CONCAT(
     CASE
@@ -94,6 +100,8 @@ UNION ALL
 SELECT
   m.hadm_id,
   'microbiologyevents' AS event_type,
+  CONCAT('MICRO:', CAST(m.test_itemid AS STRING)) AS event_code,
+  'MICRO_ITEMID' AS code_system,
   DATETIME_DIFF(m.charttime, a.admittime, SECOND) / 3600.0 AS timestamp,
   CONCAT(
     m.test_name, ' on ', m.spec_type_desc,
@@ -108,12 +116,16 @@ JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_cohort_base` c
   ON c.hadm_id = m.hadm_id
 JOIN `physionet-data.mimiciv_3_1_hosp.admissions` a
   ON a.hadm_id = m.hadm_id
-WHERE m.charttime IS NOT NULL AND m.storetime IS NOT NULL
+WHERE m.charttime IS NOT NULL
+  AND m.storetime IS NOT NULL
+  AND m.test_itemid IS NOT NULL
 
 UNION ALL
 SELECT
   p.hadm_id,
   'prescriptions' AS event_type,
+  CONCAT('NDC:', p.ndc) AS event_code,
+  'NDC' AS code_system,
   DATETIME_DIFF(p.starttime, a.admittime, SECOND) / 3600.0 AS timestamp,
   CONCAT(
     p.drug,
@@ -131,11 +143,14 @@ JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_cohort_base` c
 JOIN `physionet-data.mimiciv_3_1_hosp.admissions` a
   ON a.hadm_id = p.hadm_id
 WHERE p.starttime IS NOT NULL
+  AND p.ndc IS NOT NULL
 
 UNION ALL
 SELECT
   t.hadm_id,
   'transfers' AS event_type,
+  CONCAT('TRANSFER:', t.eventtype) AS event_code,
+  'TRANSFER' AS code_system,
   DATETIME_DIFF(t.intime, a.admittime, SECOND) / 3600.0 AS timestamp,
   CONCAT(t.eventtype, IF(t.careunit IS NOT NULL AND t.careunit <> '', CONCAT(' to ', t.careunit), '')) AS event_value,
   DATETIME_DIFF(t.intime, a.admittime, SECOND) / 3600.0 AS timestamp_avail
@@ -148,8 +163,78 @@ WHERE t.intime IS NOT NULL
 
 UNION ALL
 SELECT
+  d.hadm_id,
+  'diagnoses_icd' AS event_type,
+  CONCAT('ICD', CAST(d.icd_version AS STRING), ':', d.icd_code) AS event_code,
+  CONCAT('ICD', CAST(d.icd_version AS STRING)) AS code_system,
+  DATETIME_DIFF(a.dischtime, a.admittime, SECOND) / 3600.0 AS timestamp,
+  CONCAT('Billed diagnosis: ', dd.long_title) AS event_value,
+  DATETIME_DIFF(a.dischtime, a.admittime, SECOND) / 3600.0 AS timestamp_avail
+FROM `physionet-data.mimiciv_3_1_hosp.diagnoses_icd` d
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_cohort_base` c
+  ON c.hadm_id = d.hadm_id
+JOIN `physionet-data.mimiciv_3_1_hosp.admissions` a
+  ON a.hadm_id = d.hadm_id
+LEFT JOIN `physionet-data.mimiciv_3_1_hosp.d_icd_diagnoses` dd
+  ON dd.icd_code = d.icd_code
+  AND dd.icd_version = d.icd_version
+
+UNION ALL
+SELECT
+  i.hadm_id,
+  'inputevents' AS event_type,
+  CONCAT('INPUT:', CAST(ie.itemid AS STRING)) AS event_code,
+  'INPUT' AS code_system,
+  DATETIME_DIFF(ie.starttime, a.admittime, SECOND) / 3600.0 AS timestamp,
+  CONCAT(
+    di.label,
+    IF(ie.amount IS NOT NULL, CONCAT(': ', CAST(ie.amount AS STRING)), ''),
+    IF(ie.amountuom IS NOT NULL AND ie.amountuom <> '', CONCAT(' ', ie.amountuom), ''),
+    IF(ie.ordercategoryname IS NOT NULL AND ie.ordercategoryname <> '',
+      CONCAT(', category: ', ie.ordercategoryname), '')
+  ) AS event_value,
+  DATETIME_DIFF(COALESCE(ie.endtime, ie.starttime), a.admittime, SECOND) / 3600.0 AS timestamp_avail
+FROM `physionet-data.mimiciv_3_1_icu.inputevents` ie
+JOIN `physionet-data.mimiciv_3_1_icu.icustays` i
+  ON i.stay_id = ie.stay_id
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_cohort_base` c
+  ON c.hadm_id = i.hadm_id
+JOIN `physionet-data.mimiciv_3_1_hosp.admissions` a
+  ON a.hadm_id = i.hadm_id
+JOIN `physionet-data.mimiciv_3_1_icu.d_items` di
+  ON di.itemid = ie.itemid
+WHERE ie.starttime IS NOT NULL
+
+UNION ALL
+SELECT
+  i.hadm_id,
+  'outputevents' AS event_type,
+  CONCAT('OUTPUT:', CAST(oe.itemid AS STRING)) AS event_code,
+  'OUTPUT' AS code_system,
+  DATETIME_DIFF(oe.charttime, a.admittime, SECOND) / 3600.0 AS timestamp,
+  CONCAT(
+    di.label,
+    IF(oe.value IS NOT NULL, CONCAT(': ', CAST(oe.value AS STRING)), ''),
+    IF(oe.valueuom IS NOT NULL AND oe.valueuom <> '', CONCAT(' ', oe.valueuom), '')
+  ) AS event_value,
+  DATETIME_DIFF(oe.charttime, a.admittime, SECOND) / 3600.0 AS timestamp_avail
+FROM `physionet-data.mimiciv_3_1_icu.outputevents` oe
+JOIN `physionet-data.mimiciv_3_1_icu.icustays` i
+  ON i.stay_id = oe.stay_id
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_cohort_base` c
+  ON c.hadm_id = i.hadm_id
+JOIN `physionet-data.mimiciv_3_1_hosp.admissions` a
+  ON a.hadm_id = i.hadm_id
+JOIN `physionet-data.mimiciv_3_1_icu.d_items` di
+  ON di.itemid = oe.itemid
+WHERE oe.charttime IS NOT NULL
+
+UNION ALL
+SELECT
   pe.hadm_id,
   'procedureevents' AS event_type,
+  CONCAT('PROC:', CAST(pe.itemid AS STRING)) AS event_code,
+  'PROC' AS code_system,
   DATETIME_DIFF(pe.starttime, a.admittime, SECOND) / 3600.0 AS timestamp,
   CONCAT(
     di.label,
@@ -232,12 +317,14 @@ WHERE hosp_los_hours >= 48;
 -- Readmission: exclude deceased, all events.
 CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_next_admit` AS
 SELECT
-  subject_id,
-  hadm_id,
-  admittime,
-  dischtime,
-  LEAD(admittime) OVER (PARTITION BY subject_id ORDER BY admittime) AS next_admittime
-FROM `physionet-data.mimiciv_3_1_hosp.admissions`;
+  a.subject_id,
+  a.hadm_id,
+  a.admittime,
+  a.dischtime,
+  LEAD(a.admittime) OVER (PARTITION BY a.subject_id ORDER BY a.admittime) AS next_admittime
+FROM `physionet-data.mimiciv_3_1_hosp.admissions` a
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_cohort` c
+  ON c.hadm_id = a.hadm_id;
 
 CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_readmission` AS
 SELECT
@@ -252,6 +339,34 @@ FROM `mimic-iv-485411.hyperbolic_ehr.llemr_admission_windows` w
 JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_next_admit` n
   ON n.hadm_id = w.hadm_id
 WHERE w.hospital_expire_flag = 0;
+
+-- ------------------------
+-- Task-specific event tables
+-- ------------------------
+
+-- Mortality: events within first 48 hours.
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_mortality_events` AS
+SELECT e.*
+FROM `mimic-iv-485411.hyperbolic_ehr.event_selected` e
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_mortality` m
+  ON m.hadm_id = e.hadm_id
+WHERE e.timestamp >= 0 AND e.timestamp <= 48;
+
+-- LOS: events within first 48 hours.
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_los_events` AS
+SELECT e.*
+FROM `mimic-iv-485411.hyperbolic_ehr.event_selected` e
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_los` l
+  ON l.hadm_id = e.hadm_id
+WHERE e.timestamp >= 0 AND e.timestamp <= 48;
+
+-- Readmission: all events in the admission.
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_readmission_events` AS
+SELECT e.*
+FROM `mimic-iv-485411.hyperbolic_ehr.event_selected` e
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_readmission` r
+  ON r.hadm_id = e.hadm_id
+WHERE e.timestamp >= 0;
 
 -- ------------------------
 -- Diagnosis phenotyping (requires uploaded CSVs)
@@ -341,3 +456,203 @@ FROM `mimic-iv-485411.hyperbolic_ehr.llemr_cohort` c
 LEFT JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_diagnosis_labels` l
   ON l.hadm_id = c.hadm_id
 GROUP BY c.subject_id, c.hadm_id;
+
+-- Diagnosis: all events in the admission.
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_diagnosis_events` AS
+SELECT e.*
+FROM `mimic-iv-485411.hyperbolic_ehr.event_selected` e
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_diagnosis` d
+  ON d.hadm_id = e.hadm_id
+WHERE e.event_type <> 'diagnoses_icd'
+  AND e.timestamp >= 0;
+
+-- ------------------------
+-- Task exports (labels + events combined)
+-- ------------------------
+
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_mortality_task` AS
+SELECT
+  m.subject_id,
+  m.hadm_id,
+  'mortality' AS task_name,
+  m.label_mortality,
+  m.window_start,
+  m.window_end,
+  48 AS t_pred_hours,
+  e.event_type,
+  e.event_code AS code,
+  e.code_system,
+  e.timestamp AS event_time_hours,
+  e.timestamp_avail AS event_time_avail_hours,
+  e.timestamp,
+  e.event_value,
+  e.timestamp_avail
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_mortality` m
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_mortality_events` e
+  ON e.hadm_id = m.hadm_id;
+
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_los_task` AS
+SELECT
+  l.subject_id,
+  l.hadm_id,
+  'los' AS task_name,
+  l.label_los_gt_7d,
+  l.window_start,
+  l.window_end,
+  48 AS t_pred_hours,
+  e.event_type,
+  e.event_code AS code,
+  e.code_system,
+  e.timestamp AS event_time_hours,
+  e.timestamp_avail AS event_time_avail_hours,
+  e.timestamp,
+  e.event_value,
+  e.timestamp_avail
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_los` l
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_los_events` e
+  ON e.hadm_id = l.hadm_id;
+
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_readmission_task` AS
+SELECT
+  r.subject_id,
+  r.hadm_id,
+  'readmission' AS task_name,
+  r.label_readmit_14d,
+  r.hosp_los_hours AS t_pred_hours,
+  e.event_type,
+  e.event_code AS code,
+  e.code_system,
+  e.timestamp AS event_time_hours,
+  e.timestamp_avail AS event_time_avail_hours,
+  e.timestamp,
+  e.event_value,
+  e.timestamp_avail
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_readmission` r
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_readmission_events` e
+  ON e.hadm_id = r.hadm_id;
+
+CREATE OR REPLACE TABLE `mimic-iv-485411.hyperbolic_ehr.llemr_diagnosis_task` AS
+SELECT
+  d.subject_id,
+  d.hadm_id,
+  'diagnosis' AS task_name,
+  d.label_septicemia,
+  d.label_diabetes_without_complication,
+  d.label_diabetes_with_complications,
+  d.label_lipid_disorders,
+  d.label_fluid_electrolyte_disorders,
+  d.label_essential_hypertension,
+  d.label_hypertension_with_complications,
+  d.label_acute_myocardial_infarction,
+  d.label_coronary_atherosclerosis,
+  d.label_conduction_disorders,
+  d.label_cardiac_dysrhythmias,
+  d.label_congestive_heart_failure,
+  d.label_acute_cerebrovascular_disease,
+  d.label_pneumonia,
+  d.label_copd_bronchiectasis,
+  d.label_pleurisy_pneumothorax_collapse,
+  d.label_respiratory_failure,
+  d.label_other_lower_respiratory,
+  d.label_other_upper_respiratory,
+  d.label_other_liver_disease,
+  d.label_gi_hemorrhage,
+  d.label_acute_renal_failure,
+  d.label_chronic_kidney_disease,
+  d.label_surgical_medical_complications,
+  d.label_shock,
+  w.hosp_los_hours AS t_pred_hours,
+  e.event_type,
+  e.event_code AS code,
+  e.code_system,
+  e.timestamp AS event_time_hours,
+  e.timestamp_avail AS event_time_avail_hours,
+  e.timestamp,
+  e.event_value,
+  e.timestamp_avail
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_diagnosis` d
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_diagnosis_events` e
+  ON e.hadm_id = d.hadm_id
+JOIN `mimic-iv-485411.hyperbolic_ehr.llemr_admission_windows` w
+  ON w.hadm_id = d.hadm_id;
+
+-- ------------------------
+-- Exports (update bucket/path)
+-- ------------------------
+
+EXPORT DATA OPTIONS (
+  uri = 'gs://mimiciv-exports-485411/llemr_mortality_task_*.csv',
+  format = 'CSV',
+  overwrite = true,
+  header = true
+) AS
+SELECT * FROM `mimic-iv-485411.hyperbolic_ehr.llemr_mortality_task`;
+
+EXPORT DATA OPTIONS (
+  uri = 'gs://mimiciv-exports-485411/llemr_los_task_*.csv',
+  format = 'CSV',
+  overwrite = true,
+  header = true
+) AS
+SELECT * FROM `mimic-iv-485411.hyperbolic_ehr.llemr_los_task`;
+
+EXPORT DATA OPTIONS (
+  uri = 'gs://mimiciv-exports-485411/llemr_readmission_task_*.csv',
+  format = 'CSV',
+  overwrite = true,
+  header = true
+) AS
+SELECT * FROM `mimic-iv-485411.hyperbolic_ehr.llemr_readmission_task`;
+
+EXPORT DATA OPTIONS (
+  uri = 'gs://mimiciv-exports-485411/llemr_diagnosis_task_*.csv',
+  format = 'CSV',
+  overwrite = true,
+  header = true
+) AS
+SELECT * FROM `mimic-iv-485411.hyperbolic_ehr.llemr_diagnosis_task`;
+
+-- ------------------------
+-- Sanity checks
+-- ------------------------
+
+-- Event window checks.
+SELECT
+  'mortality' AS cohort,
+  COUNT(*) AS events,
+  MIN(timestamp) AS min_ts,
+  MAX(timestamp) AS max_ts
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_mortality_events`
+UNION ALL
+SELECT
+  'los' AS cohort,
+  COUNT(*) AS events,
+  MIN(timestamp) AS min_ts,
+  MAX(timestamp) AS max_ts
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_los_events`
+UNION ALL
+SELECT
+  'readmission' AS cohort,
+  COUNT(*) AS events,
+  MIN(timestamp) AS min_ts,
+  MAX(timestamp) AS max_ts
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_readmission_events`
+UNION ALL
+SELECT
+  'diagnosis' AS cohort,
+  COUNT(*) AS events,
+  MIN(timestamp) AS min_ts,
+  MAX(timestamp) AS max_ts
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_diagnosis_events`;
+
+-- Cohort size checks.
+SELECT 'cohort' AS table_name, COUNT(*) AS admissions
+FROM `mimic-iv-485411.hyperbolic_ehr.llemr_cohort`
+UNION ALL
+SELECT 'mortality', COUNT(*) FROM `mimic-iv-485411.hyperbolic_ehr.llemr_mortality`
+UNION ALL
+SELECT 'los', COUNT(*) FROM `mimic-iv-485411.hyperbolic_ehr.llemr_los`
+UNION ALL
+SELECT 'readmission', COUNT(*) FROM `mimic-iv-485411.hyperbolic_ehr.llemr_readmission`
+UNION ALL
+SELECT 'diagnosis', COUNT(*) FROM `mimic-iv-485411.hyperbolic_ehr.llemr_diagnosis`;
