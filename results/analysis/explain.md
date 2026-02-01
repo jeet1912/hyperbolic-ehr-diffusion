@@ -1,6 +1,6 @@
 Hyperbolic Trajectory Modeling
 ================================================================
-Ablations from `results/analysis/table0_0.md` through `table0_8.md` chart a single theme: every architectural change under `src/` tries to reconcile discrete recall with hierarchical structure. The discussion below ignores the MIMIC risk model (`risk_prediction_mimic.py`) and concentrates solely on the synthetic ICD trajectory program.
+Ablations from `results/analysis/table0_0.md` through `table0_8.md` chart a single theme: every architectural change under `src/` tries to reconcile discrete recall with hierarchical structure. The discussion below ignores the MIMIC task model (`task_prediction_mimic_iv.py`) and concentrates solely on the synthetic ICD trajectory program.
 
 Clinical Context & Generative Intuition
 ---------------------------------------

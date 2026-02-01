@@ -28,7 +28,7 @@ Canonical task export format (BigQuery `*_task` tables) includes: subject_id, ha
 ## Code hierarchy used by the model (ICD only)
 
 For LLemr cohorts, the `code` field mixes ICD9/ICD10 diagnosis codes with other structured codes
-(LAB, INPUT/OUTPUT/PROC, NDC, MICRO). In `src/risk_prediction_mimic.py`, the hierarchy is an ICD
+(LAB, INPUT/OUTPUT/PROC, NDC, MICRO). In `src/task_prediction_mimic_iv.py`, the hierarchy is an ICD
 tree provided via `--icd-tree` (e.g., `data/mimiciii/icd9_parent_map.csv`). This hierarchy applies
 only to ICD codes; non-ICD codes are treated as flat tokens.
 
@@ -110,11 +110,11 @@ Notes:
 
 ## On-the-fly CSV loading (no PKL)
 
-`src/risk_prediction_mimic.py` loads LLemr task CSVs directly and builds sequences on the fly.
+`src/task_prediction_mimic_iv.py` loads LLemr task CSVs directly and builds sequences on the fly.
 Command to run the model:
 
 ```bash
-python3 src/risk_prediction_mimic.py \
+python3 src/task_prediction_mimic_iv.py \
   --task-csv data/mimiciv/llemr_readmission_task.csv \
   --cohort-csv data/mimiciv/llemr_cohort.csv \
   --task-name readmission \
@@ -124,3 +124,36 @@ python3 src/risk_prediction_mimic.py \
 
 The co-occurrence graph (for diffusion metrics) is computed from the in-memory sequences
 constructed by the CSV loader, so no PKL is required for graph construction.
+
+To visualize the train-split co-occurrence graph:
+
+```bash
+python3 data/visualize_graph.py \
+  --task-csv data/mimiciv/llemr_readmission_task.csv \
+  --cohort-csv data/mimiciv/llemr_cohort.csv \
+  --task-name readmission \
+  --split train \
+  --output results/plots/llemr_readmission_graph.png
+```
+
+Use `--split all` to build the graph on the full dataset.
+
+## Co-occurrence graph + metrics
+
+**Where to display the co-occurrence graph:** the graph is derived from the sequences in memory
+and used for diffusion metrics. If you want to visualize it, you can adapt
+`data/visualize_graph.py` to read from the CSV loader (`MimicCsvDataset`) instead of a PKL,
+then save the rendered PNG. (The current script expects a PKL.)
+
+**What UMAPs show:** the UMAP plots are low-dimensional projections of the learned code
+embeddings (after diffusion) to visualize clustering/geometry. They are qualitative only.
+
+**What the metrics convey:**
+- Diffusion/embedding Spearman: alignment between graph diffusion distances and embedding distances.
+- Tree/embedding Spearman: alignment between ICD tree distances and embedding distances.
+- Distortion by depth: how well embedding distances preserve tree distances across depths.
+- AUROC/AUPRC/F1/Accuracy: downstream risk prediction performance.
+
+**Recommended metrics by task:**
+- Mortality / LOS / Readmission (binary): AUROC + AUPRC (report both), F1/Accuracy as secondary.
+- Diagnosis (multi-label): micro/macro AUROC and micro/macro AUPRC; per-label AUPRC for rare codes.

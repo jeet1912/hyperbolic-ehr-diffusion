@@ -789,6 +789,66 @@ def spearman_corr(x: np.ndarray, y: np.ndarray) -> float:
     return float(np.corrcoef(rx, ry)[0, 1])
 
 
+def get_label_names(task_name: str) -> List[str]:
+    if task_name == "mortality":
+        return ["label_mortality"]
+    if task_name == "los":
+        return ["label_los_gt_7d"]
+    if task_name == "readmission":
+        return ["label_readmit_14d"]
+    if task_name == "diagnosis":
+        return [
+            "label_septicemia",
+            "label_diabetes_without_complication",
+            "label_diabetes_with_complications",
+            "label_lipid_disorders",
+            "label_fluid_electrolyte_disorders",
+            "label_essential_hypertension",
+            "label_hypertension_with_complications",
+            "label_acute_myocardial_infarction",
+            "label_coronary_atherosclerosis",
+            "label_conduction_disorders",
+            "label_cardiac_dysrhythmias",
+            "label_congestive_heart_failure",
+            "label_acute_cerebrovascular_disease",
+            "label_pneumonia",
+            "label_copd_bronchiectasis",
+            "label_pleurisy_pneumothorax_collapse",
+            "label_respiratory_failure",
+            "label_other_lower_respiratory",
+            "label_other_upper_respiratory",
+            "label_other_liver_disease",
+            "label_gi_hemorrhage",
+            "label_acute_renal_failure",
+            "label_chronic_kidney_disease",
+            "label_surgical_medical_complications",
+            "label_shock",
+        ]
+    return ["label"]
+
+
+def log_label_summary(y, task_name: str) -> None:
+    y_arr = np.array(y)
+    n = y_arr.shape[0]
+    label_names = get_label_names(task_name)
+    if y_arr.ndim == 1:
+        pos = int(y_arr.sum())
+        neg = int(n - pos)
+        rate = pos / n if n else 0.0
+        print(
+            f"[HyperMedDiff-Risk] Labels ({label_names[0]}): "
+            f"pos={pos} neg={neg} rate={rate:.4f}"
+        )
+        return
+    if y_arr.ndim == 2:
+        print(f"[HyperMedDiff-Risk] Labels ({task_name}):")
+        for i in range(y_arr.shape[1]):
+            name = label_names[i] if i < len(label_names) else f"label_{i}"
+            pos = int(y_arr[:, i].sum())
+            rate = pos / n if n else 0.0
+            print(f"  - {name}: pos={pos} rate={rate:.4f}")
+
+
 def load_icd_parent_map(tree_path: str) -> Dict[str, str]:
     with open(tree_path, "r") as f:
         raw = f.read().strip()
@@ -1627,7 +1687,7 @@ def group_split_indices(subject_ids, train_frac=0.7, val_frac=0.15, seed=42):
 # ----------------------------- Main ----------------------------- #
 
 # Usage (CSV):
-# python3 src/risk_prediction_mimic.py --task-csv data/mimiciv/llemr_readmission_task.csv --cohort-csv data/mimiciv/llemr_cohort.csv --task-name readmission --icd-tree data/mimiciii/icd9_parent_map.csv --icd10-gem data/icd9toicd10cmgem.csv
+# python3 src/task_prediction_mimic_iv.py --task-csv data/mimiciv/llemr_readmission_task.csv --cohort-csv data/mimiciv/llemr_cohort.csv --task-name readmission --icd-tree data/mimiciii/icd9_parent_map.csv --icd10-gem data/icd9toicd10cmgem.csv
 
 def main():
     parser = argparse.ArgumentParser(
@@ -1721,6 +1781,7 @@ def main():
 
     real_stats = mimic_traj_stats(dataset.x)
     print(f"[HyperMedDiff-Risk] Real trajectory stats: {json.dumps(real_stats, indent=2)}")
+    log_label_summary(dataset.y, args.task_name)
 
     idx_to_code = {idx: code for code, idx in dataset.code_map.items() if idx != 0}
     valid_code_indices = sorted(idx_to_code.keys())
