@@ -270,3 +270,9 @@ class MimicCsvDataset(Dataset):
         print(
             f"[MIMIC] Admissions: {len(self.x)} | Vocab size: {self.vocab_size}"
         )
+
+    def __len__(self) -> int:
+        return len(self.x)
+
+    def __getitem__(self, idx: int):
+        return self.x[idx], self.y[idx]

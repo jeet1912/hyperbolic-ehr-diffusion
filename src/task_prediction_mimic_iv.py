@@ -24,7 +24,7 @@ from regularizers import radius_regularizer
 
 # ----------------------------- Hyperparams ----------------------------- #
 
-BATCH_SIZE = 8
+BATCH_SIZE = 32
 TRAIN_LR = 1e-4
 TRAIN_EPOCHS = 50
 EARLY_STOP_PATIENCE = 5
@@ -1761,18 +1761,40 @@ def main():
         default="data/icd9toicd10cmgem.csv",
         help="GEM crosswalk CSV used to map ICD10 codes to ICD9 for tree metrics.",
     )
+    parser.add_argument(
+        "--pretrain-device",
+        type=str,
+        default="auto",
+        choices=["auto", "cpu", "cuda", "mps"],
+        help="Device for code-embedding pretraining (default: auto).",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        choices=["auto", "cpu", "cuda", "mps"],
+        help="Main training device (default: auto).",
+    )
     args = parser.parse_args()
 
     # ICD tree is optional when only final task metrics are reported.
 
-    device = torch.device(
-        "cuda"
-        if torch.cuda.is_available()
-        else "mps"
-        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
-        else "cpu"
-    )
+    if args.device == "auto":
+        device = torch.device(
+            "cuda"
+            if torch.cuda.is_available()
+            else "mps"
+            if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
+            else "cpu"
+        )
+    else:
+        device = torch.device(args.device)
     print(f"Using device: {device}")
+    if args.pretrain_device == "auto":
+        pretrain_device = torch.device("cpu" if device.type == "mps" else device.type)
+    else:
+        pretrain_device = torch.device(args.pretrain_device)
+    print(f"Using pretrain device: {pretrain_device}")
 
     # Dataset (CSV only)
     if not args.task_csv:
@@ -1827,36 +1849,39 @@ def main():
             f"[HyperMedDiff-Risk] ===== Experiment {run_idx}/{len(experiments)}: {exp_name} ====="
         )
         print(json.dumps(config, indent=2))
-        diffusion_metric = MimicDiffusionMetric.from_sequences(
-            dataset.x,
-            vocab_size=dataset.vocab_size,
-            steps=config["diffusion_steps"],
-            device=device,
-        )
-        diffusion_kernels = build_diffusion_kernels_from_sequences(
-            dataset.x,
-            dataset.vocab_size,
-            config["diffusion_steps"],
-            device,
-        )
         pretrain_code_emb = config.get("pretrain_code_emb", True)
         if pretrain_code_emb:
+            diffusion_metric = MimicDiffusionMetric.from_sequences(
+                dataset.x,
+                vocab_size=dataset.vocab_size,
+                steps=config["diffusion_steps"],
+                device=pretrain_device,
+            )
             code_emb = pretrain_code_embedding(
                 dataset.x,
                 dataset.vocab_size,
                 config["embed_dim"],
-                device,
+                pretrain_device,
                 diffusion_metric,
                 lambda_radius=config["lambda_radius"],
                 lambda_hdd=config["lambda_hdd"],
                 valid_indices=valid_code_indices,
             )
             print("[HyperMedDiff-Risk] Code embedding pretraining enabled.")
+            if pretrain_device.type != device.type:
+                code_emb = code_emb.to(device)
         else:
             code_emb = HyperbolicCodeEmbedding(
                 num_codes=dataset.vocab_size, dim=config["embed_dim"]
             ).to(device)
             print("[HyperMedDiff-Risk] Code embedding pretraining disabled (random init).")
+
+        diffusion_kernels = build_diffusion_kernels_from_sequences(
+            dataset.x,
+            dataset.vocab_size,
+            config["diffusion_steps"],
+            device,
+        )
 
         freeze_code_emb = config.get("freeze_code_emb", True)
         faithfulness_prefix = "Frozen-code" if freeze_code_emb else "Code"
