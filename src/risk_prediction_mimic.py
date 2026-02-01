@@ -1,4 +1,5 @@
 import argparse
+import csv
 import copy
 import json
 import os
@@ -16,7 +17,7 @@ try:
 except ImportError:
     UMAP = None
 
-from dataset import MimicDataset, make_pad_collate
+from dataset import MimicCsvDataset, make_pad_collate
 from hyperbolic_embeddings import HyperbolicCodeEmbedding
 from traj_models import TrajectoryVelocityModel
 from regularizers import radius_regularizer
@@ -819,6 +820,71 @@ def load_icd_parent_map(tree_path: str) -> Dict[str, str]:
     return parent_map
 
 
+def normalize_icd9(code: str) -> str:
+    if not code:
+        return code
+    code = code.strip().upper()
+    if "." in code:
+        return code
+    if code.startswith("E"):
+        return code if len(code) <= 4 else f"{code[:4]}.{code[4:]}"
+    if code.startswith("V"):
+        return code if len(code) <= 3 else f"{code[:3]}.{code[3:]}"
+    return code if len(code) <= 3 else f"{code[:3]}.{code[3:]}"
+
+
+def normalize_icd10(code: str) -> str:
+    if not code:
+        return code
+    return code.strip().upper().replace(".", "")
+
+
+def load_icd10_to_icd9_gem(gem_path: str) -> Dict[str, str]:
+    if not gem_path or not os.path.exists(gem_path):
+        return {}
+    mapping: Dict[str, str] = {}
+    approx_map: Dict[str, int] = {}
+    with open(gem_path, "r") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            icd9 = str(row.get("icd9cm", "")).strip()
+            icd10 = str(row.get("icd10cm", "")).strip()
+            if not icd9 or not icd10:
+                continue
+            no_map = int(row.get("no_map", 0) or 0)
+            if no_map:
+                continue
+            approximate = int(row.get("approximate", 0) or 0)
+            icd10 = normalize_icd10(icd10)
+            if icd10 in mapping:
+                if approximate == 0 and approx_map.get(icd10, 1) != 0:
+                    mapping[icd10] = icd9
+                    approx_map[icd10] = approximate
+                continue
+            mapping[icd10] = icd9
+            approx_map[icd10] = approximate
+    return mapping
+
+
+def build_icd9_tree_map(
+    codes: Sequence[str],
+    icd10_to_icd9: Dict[str, str],
+) -> Dict[str, str]:
+    code_map: Dict[str, str] = {}
+    for code in codes:
+        if code.startswith("ICD9:"):
+            icd9 = normalize_icd9(code.split(":", 1)[1])
+            if icd9:
+                code_map[code] = icd9
+            continue
+        if code.startswith("ICD10:"):
+            icd10 = normalize_icd10(code.split(":", 1)[1])
+            icd9_raw = icd10_to_icd9.get(icd10)
+            if icd9_raw:
+                code_map[code] = normalize_icd9(icd9_raw)
+    return code_map
+
+
 def build_ancestor_paths(
     codes: Sequence[str],
     parent_map: Dict[str, str],
@@ -1560,15 +1626,29 @@ def group_split_indices(subject_ids, train_frac=0.7, val_frac=0.15, seed=42):
 
 # ----------------------------- Main ----------------------------- #
 
-# Usage:
-# python3 src/risk_prediction_mimic.py --pkl data/mimiciii/mimic_hf_cohort.pkl --icd-tree data/mimiciii/icd9_parent_map.csv > results/analysis/mimiciii_hf/mimiciii_hf_study.md
+# Usage (CSV):
+# python3 src/risk_prediction_mimic.py --task-csv data/mimiciv/llemr_readmission_task.csv --cohort-csv data/mimiciv/llemr_cohort.csv --task-name readmission --icd-tree data/mimiciii/icd9_parent_map.csv --icd10-gem data/icd9toicd10cmgem.csv
 
 def main():
     parser = argparse.ArgumentParser(
         description="Hyperbolic Graph Diffusion + Rectified Flow + MedDiffusion-style Risk Modeling."
     )
-    parser.add_argument("--pkl", type=str, default="data/mimiciii/mimic_hf_cohort.pkl",
-                        help="Path to mimic_hf_cohort pickle.")
+    parser.add_argument("--task-csv", type=str, default=None,
+                        help="LLemr task CSV (e.g., llemr_mortality_task.csv).")
+    parser.add_argument("--cohort-csv", type=str, default=None,
+                        help="LLemr cohort CSV for global subject splits.")
+    parser.add_argument("--task-name", type=str, default=None,
+                        choices=["mortality", "los", "readmission", "diagnosis"],
+                        help="Task name for CSV loader.")
+    parser.add_argument("--bin-hours", type=int, default=6,
+                        help="Bin size in hours for CSV loader.")
+    parser.add_argument("--drop-negative", action="store_true",
+                        help="Drop events with negative timestamps.")
+    parser.add_argument("--truncate", type=str, default="latest",
+                        choices=["latest", "earliest"],
+                        help="Truncate long sequences when loading CSVs.")
+    parser.add_argument("--t-max", type=int, default=256,
+                        help="Max visits for readmission/diagnosis when loading CSVs.")
     parser.add_argument("--output", type=str, default="results/checkpoints",
                         help="Directory for checkpoints.")
     parser.add_argument("--plot-dir", type=str, default="results/plots",
@@ -1579,6 +1659,12 @@ def main():
                         help="If >0, subsample at most this many codes for UMAP.")
     parser.add_argument("--icd-tree", type=str, default=None,
                         help="Path to ICD tree file (child,parent per line or JSON mapping).")
+    parser.add_argument(
+        "--icd10-gem",
+        type=str,
+        default="data/icd9toicd10cmgem.csv",
+        help="GEM crosswalk CSV used to map ICD10 codes to ICD9 for tree metrics.",
+    )
     parser.add_argument("--metric-pairs", type=int, default=5000,
                         help="Number of random code pairs for tree/diffusion metrics.")
     parser.add_argument("--metric-seed", type=int, default=42,
@@ -1602,8 +1688,22 @@ def main():
     )
     print(f"Using device: {device}")
 
-    # Dataset
-    dataset = MimicDataset(args.pkl)
+    # Dataset (CSV only)
+    if not args.task_csv:
+        parser.error("Missing --task-csv.")
+    if not args.cohort_csv:
+        parser.error("Missing --cohort-csv.")
+    if not args.task_name:
+        parser.error("Missing --task-name.")
+    dataset = MimicCsvDataset(
+        task_csv=args.task_csv,
+        cohort_csv=args.cohort_csv,
+        task_name=args.task_name,
+        bin_hours=args.bin_hours,
+        drop_negative=args.drop_negative,
+        truncate=args.truncate,
+        t_max=args.t_max,
+    )
     collate_fn = make_pad_collate(dataset.vocab_size)
 
     train_idx, val_idx, test_idx = group_split_indices(dataset.subject_id, seed=42)
@@ -1645,13 +1745,25 @@ def main():
             "Failed to load ICD tree. Run scripts/icd9/build_icd9_parent_map.py "
             "and pass the generated CSV via --icd-tree."
         ) from exc
-    tree_source = "cms"
 
-    for code in codes:
+    icd10_to_icd9 = load_icd10_to_icd9_gem(args.icd10_gem)
+    icd_code_map = build_icd9_tree_map(codes, icd10_to_icd9)
+    idx_to_tree_code = {
+        idx: icd_code_map[code]
+        for idx, code in idx_to_code.items()
+        if code in icd_code_map
+    }
+    tree_codes = list(idx_to_tree_code.values())
+    tree_source = "icd9+gem"
+
+    for code in tree_codes:
         parent_map.setdefault(code, ROOT_CODE)
 
-    ancestor_paths, depth_map = build_ancestor_paths(codes, parent_map)
-    print(f"[HyperMedDiff-Risk] ICD tree source: {tree_source} | codes: {len(depth_map)}")
+    ancestor_paths, depth_map = build_ancestor_paths(tree_codes, parent_map)
+    print(
+        f"[HyperMedDiff-Risk] ICD tree source: {tree_source} | "
+        f"tree_codes={len(depth_map)} | total_codes={len(codes)}"
+    )
 
     os.makedirs(args.plot_dir, exist_ok=True)
     os.makedirs(args.output, exist_ok=True)
@@ -1801,7 +1913,7 @@ def main():
         distortion_path = None
         tree_dists, latent_dists, lca_depths, tree_debug = sample_tree_latent_pairs(
             code_emb,
-            idx_to_code,
+            idx_to_tree_code,
             ancestor_paths,
             depth_map,
             device,

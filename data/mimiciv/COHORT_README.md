@@ -104,16 +104,23 @@ combine("llemr_diagnosis_task", "data/mimiciv/llemr_diagnosis_task.csv")
 PY
 ```
 
-5) Build PKLs for RETAIN/MedDiffusion/our model:
-
-```bash
-python3 data/mimiciv/create_task_pkls.py --task mortality --input-dir data/mimiciv --output-dir data/mimiciv/pkl --cohort-path data/mimiciv/llemr_cohort.csv
-python3 data/mimiciv/create_task_pkls.py --task los        --input-dir data/mimiciv --output-dir data/mimiciv/pkl --cohort-path data/mimiciv/llemr_cohort.csv
-python3 data/mimiciv/create_task_pkls.py --task readmission --input-dir data/mimiciv --output-dir data/mimiciv/pkl --cohort-path data/mimiciv/llemr_cohort.csv
-python3 data/mimiciv/create_task_pkls.py --task diagnosis   --input-dir data/mimiciv --output-dir data/mimiciv/pkl --cohort-path data/mimiciv/llemr_cohort.csv
-```
-
 Notes:
 - The BigQuery script exports only the `llemr_*_task` tables; the base cohort export must be run separately (step 2).
-- LLemr uses the merged `llemr_*_task.csv` files directly. RETAIN/MedDiffusion/our model use the PKLs from step 5.
-- Readmission/diagnosis PKLs are large (multihot tensors). If you hit "No space left on device", free disk space or set `--output-dir` to a larger drive before rerunning those tasks.
+- LLemr uses the merged `llemr_*_task.csv` files directly.
+
+## On-the-fly CSV loading (no PKL)
+
+`src/risk_prediction_mimic.py` loads LLemr task CSVs directly and builds sequences on the fly.
+Command to run the model:
+
+```bash
+python3 src/risk_prediction_mimic.py \
+  --task-csv data/mimiciv/llemr_readmission_task.csv \
+  --cohort-csv data/mimiciv/llemr_cohort.csv \
+  --task-name readmission \
+  --icd-tree data/mimiciii/icd9_parent_map.csv \
+  --icd10-gem data/icd9toicd10cmgem.csv
+```
+
+The co-occurrence graph (for diffusion metrics) is computed from the in-memory sequences
+constructed by the CSV loader, so no PKL is required for graph construction.
