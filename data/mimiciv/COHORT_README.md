@@ -122,6 +122,8 @@ python3 src/task_prediction_mimic_iv.py \
   --icd10-gem data/icd9toicd10cmgem.csv
 ```
 
+
+
 The co-occurrence graph (for diffusion metrics) is computed from the in-memory sequences
 constructed by the CSV loader, so no PKL is required for graph construction.
 
@@ -137,6 +139,26 @@ python3 data/visualize_graph.py \
 ```
 
 Use `--split all` to build the graph on the full dataset.
+
+## Baselines (separate scripts)
+
+RETAIN:
+
+```bash
+python3 src/models/retain_mimic_iv.py \
+  --task-csv data/mimiciv/llemr_readmission_task.csv \
+  --cohort-csv data/mimiciv/llemr_cohort.csv \
+  --task-name readmission
+```
+
+MedDiffusion baseline:
+
+```bash
+python3 src/models/meddiffusion_mimic_iv.py \
+  --task-csv data/mimiciv/llemr_mortality_task.csv \
+  --cohort-csv data/mimiciv/llemr_cohort.csv \
+  --task-name mortality
+```
 
 ## Co-occurrence graph + metrics
 
