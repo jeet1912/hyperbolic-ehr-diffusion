@@ -1296,15 +1296,18 @@ class TemporalLSTMEncoder(nn.Module):
 
 class RiskHead(nn.Module):
     """
-    Binary risk prediction head (e.g., HF vs non-HF).
+    Risk prediction head for binary or multi-label tasks.
     """
-    def __init__(self, dim):
+    def __init__(self, dim: int, out_dim: int = 1):
         super().__init__()
-        self.fc = nn.Linear(dim, 1)
+        self.out_dim = out_dim
+        self.fc = nn.Linear(dim, out_dim)
 
     def forward(self, h: torch.Tensor) -> torch.Tensor:
-        # returns logits [B]
-        return self.fc(h).squeeze(-1)
+        logits = self.fc(h)
+        if self.out_dim == 1:
+            return logits.squeeze(-1)
+        return logits
 
 
 # ----------------------------- MedDiffusion-style metrics ----------------------------- #
@@ -1915,7 +1918,10 @@ def main():
             num_layers=1,
             dropout=config["dropout"],
         ).to(device)
-        risk_head = RiskHead(dim=latent_dim).to(device)
+        out_dim = 1
+        if isinstance(dataset.y[0], (list, tuple, np.ndarray)):
+            out_dim = len(dataset.y[0])
+        risk_head = RiskHead(dim=latent_dim, out_dim=out_dim).to(device)
 
         best_val, train_history, val_history = train_risk_model(
             train_loader,
