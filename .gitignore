@@ -31,7 +31,6 @@ venv.bak/
 *.ckpt
 checkpoints/
 saved_models/
-models/
 weights/
 runs/                # TensorBoard runs
 logs/
