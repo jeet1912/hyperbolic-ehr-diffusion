@@ -15,7 +15,7 @@ except Exception:  # pragma: no cover
     average_precision_score = None
 
 BATCH_SIZE = 32
-TRAIN_LR = 1e-4
+TRAIN_LR = 1e-3
 TRAIN_EPOCHS = 50
 EARLY_STOP_PATIENCE = 5
 DROPOUT_RATE = 0.2
@@ -476,6 +476,19 @@ def binary_classification_metrics(y_true, y_prob, threshold=0.5):
     return metrics
 
 
+def select_best_threshold(y_true, y_prob, thresholds=None):
+    if thresholds is None:
+        thresholds = np.linspace(0.05, 0.95, 19)
+    best_thr = 0.5
+    best_f1 = -1.0
+    for thr in thresholds:
+        metrics = binary_classification_metrics(y_true, y_prob, threshold=thr)
+        if metrics["f1"] > best_f1:
+            best_f1 = metrics["f1"]
+            best_thr = float(thr)
+    return best_thr
+
+
 def multilabel_metrics(y_true, y_prob, threshold=0.5):
     y_true = np.asarray(y_true).astype(int)
     y_prob = np.asarray(y_prob)
@@ -551,8 +564,10 @@ def run_epoch(loader, model, device, optimizer=None, lambda_gen=1.0, lambda_diff
 
 
 def train_model(train_loader, val_loader, model, device, lambda_gen=1.0, lambda_diff=1.0):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=TRAIN_LR, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=TRAIN_EPOCHS)
+    optimizer = torch.optim.Adam(model.parameters(), lr=TRAIN_LR, weight_decay=1e-3)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", patience=5, factor=0.2
+    )
 
     best_val = float("inf")
     best_state = None
@@ -577,7 +592,7 @@ def train_model(train_loader, val_loader, model, device, lambda_gen=1.0, lambda_
             lambda_gen=lambda_gen,
             lambda_diff=lambda_diff,
         )
-        scheduler.step()
+        scheduler.step(val_loss)
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         print(f"[MedDiffusion] Epoch {epoch:03d} | Train {train_loss:.4f} | Val {val_loss:.4f}")
@@ -597,7 +612,7 @@ def train_model(train_loader, val_loader, model, device, lambda_gen=1.0, lambda_
     return best_val, train_losses, val_losses
 
 
-def evaluate(loader, model, device):
+def collect_probs(loader, model, device):
     model.eval()
     all_labels = []
     all_probs = []
@@ -615,12 +630,19 @@ def evaluate(loader, model, device):
             all_probs.append(probs.cpu().numpy())
 
     if not all_labels:
-        return {}
+        return None, None
     y_true = np.concatenate(all_labels, axis=0)
     y_prob = np.concatenate(all_probs, axis=0)
+    return y_true, y_prob
+
+
+def evaluate(loader, model, device, threshold=0.5):
+    y_true, y_prob = collect_probs(loader, model, device)
+    if y_true is None:
+        return {}
     if y_true.ndim == 2:
-        return multilabel_metrics(y_true, y_prob, threshold=0.5)
-    return binary_classification_metrics(y_true, y_prob, threshold=0.5)
+        return multilabel_metrics(y_true, y_prob, threshold=threshold)
+    return binary_classification_metrics(y_true, y_prob, threshold=threshold)
 
 
 def main():
@@ -693,7 +715,7 @@ def main():
         hidden_dim=128,
         out_dim=out_dim,
         dropout=DROPOUT_RATE,
-        diffusion_steps=10,
+        diffusion_steps=1000,
         max_bin=max_bin,
     ).to(device)
 
@@ -707,7 +729,13 @@ def main():
     )
     print(f"[MedDiffusion] Best validation loss: {best_val:.4f}")
 
-    metrics = evaluate(test_loader, model, device)
+    val_y, val_p = collect_probs(val_loader, model, device)
+    threshold = 0.5
+    if val_y is not None and val_y.ndim == 1:
+        threshold = select_best_threshold(val_y, val_p)
+    metrics = evaluate(test_loader, model, device, threshold=threshold)
+    if val_y is not None and val_y.ndim == 1:
+        metrics["threshold"] = float(threshold)
     print("[MedDiffusion] Test metrics:")
     print(json.dumps(metrics, indent=2))
 

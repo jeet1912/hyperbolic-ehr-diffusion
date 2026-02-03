@@ -25,18 +25,18 @@ from regularizers import radius_regularizer
 # ----------------------------- Hyperparams ----------------------------- #
 
 BATCH_SIZE = 32
-TRAIN_LR = 1e-4
+TRAIN_LR = 5e-4
 TRAIN_EPOCHS = 50
 EARLY_STOP_PATIENCE = 5
 
 EMBED_DIM = 128
-DROPOUT_RATE = 0.2
+DROPOUT_RATE = 0.1
 
 LAMBDA_RADIUS = 0.003    # radius reg (pretrain only)
 LAMBDA_HDD = 0.02        # HDD-style alignment (pretrain only)
-LAMBDA_S = 1.0           # weight for synthetic risk loss (MedDiffusion λ_S)
-LAMBDA_D = 1.0           # weight for rectified-flow loss (MedDiffusion λ_D)
-LAMBDA_CONSISTENCY = 0.1 # synthetic/real feature consistency
+LAMBDA_S = 0.5           # weight for synthetic risk loss (MedDiffusion λ_S)
+LAMBDA_D = 0.05          # weight for rectified-flow loss (MedDiffusion λ_D)
+LAMBDA_CONSISTENCY = 0.05 # synthetic/real feature consistency
 
 BASELINE_CONFIG = {
     "diffusion_steps": [1, 2, 4, 8],
@@ -1405,6 +1405,19 @@ def binary_classification_metrics(y_true, y_prob, threshold=0.5):
     }
 
 
+def select_best_threshold(y_true, y_prob, thresholds=None):
+    if thresholds is None:
+        thresholds = np.linspace(0.05, 0.95, 19)
+    best_thr = 0.5
+    best_f1 = -1.0
+    for thr in thresholds:
+        metrics = binary_classification_metrics(y_true, y_prob, threshold=thr)
+        if metrics["f1"] > best_f1:
+            best_f1 = metrics["f1"]
+            best_thr = float(thr)
+    return best_thr
+
+
 def multilabel_metrics(y_true, y_prob, threshold=0.5):
     y_true = np.asarray(y_true).astype(int)
     y_prob = np.asarray(y_prob)
@@ -1582,7 +1595,9 @@ def train_risk_model(
         lr=train_lr,
         weight_decay=1e-5,
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=train_epochs)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", patience=3, factor=0.5
+    )
 
     best_val = float("inf")
     best_state = None
@@ -1622,7 +1637,7 @@ def train_risk_model(
             check_code_emb_grad=check_code_emb_grad,
         )
 
-        scheduler.step()
+        scheduler.step(val_loss)
         train_history.append(train_loss)
         val_history.append(val_loss)
         print(f"[HyperMedDiff-Risk] Epoch {epoch:03d} | Train {train_loss:.4f} | Val {val_loss:.4f}")
@@ -1657,6 +1672,7 @@ def evaluate_risk(
     risk_lstm,
     risk_head,
     device,
+    threshold=0.5,
 ):
     """
     Evaluate risk metrics on REAL data only (MedDiffusion-style main result).
@@ -1693,10 +1709,50 @@ def evaluate_risk(
     y_true = np.concatenate(all_labels, axis=0)
     y_prob = np.concatenate(all_probs, axis=0)
     if y_true.ndim == 2:
-        metrics = multilabel_metrics(y_true, y_prob, threshold=0.5)
+        metrics = multilabel_metrics(y_true, y_prob, threshold=threshold)
     else:
-        metrics = binary_classification_metrics(y_true, y_prob, threshold=0.5)
+        metrics = binary_classification_metrics(y_true, y_prob, threshold=threshold)
     return metrics
+
+
+def collect_risk_probs(
+    loader,
+    visit_enc,
+    risk_lstm,
+    risk_head,
+    device,
+):
+    visit_enc.eval()
+    risk_lstm.eval()
+    risk_head.eval()
+
+    all_labels = []
+    all_probs = []
+    with torch.no_grad():
+        for padded_x, labels, visit_mask in loader:
+            padded_x = padded_x.to(device)
+            labels = labels.float().to(device)
+            visit_mask = visit_mask.to(device)
+
+            visit_deltas = compute_visit_deltas(visit_mask)
+            flat_visits, flat_deltas, B, L = flatten_visits_from_multihot(
+                padded_x, visit_mask, pad_idx=0, visit_deltas=visit_deltas
+            )
+            latents = visit_enc(flat_visits, flat_deltas).to(device).view(B, L, -1)
+            if getattr(visit_enc, "output_hyperbolic", False):
+                latents = visit_enc.manifold.logmap0(latents)
+            h = risk_lstm(latents, visit_mask.bool())
+            logits = risk_head(h)
+            probs = torch.sigmoid(logits)
+
+            all_labels.append(labels.cpu().numpy())
+            all_probs.append(probs.cpu().numpy())
+
+    if not all_labels:
+        return None, None
+    y_true = np.concatenate(all_labels, axis=0)
+    y_prob = np.concatenate(all_probs, axis=0)
+    return y_true, y_prob
 
 def group_split_indices(subject_ids, train_frac=0.7, val_frac=0.15, seed=42):
     rng = np.random.default_rng(seed)
@@ -1955,7 +2011,20 @@ def main():
         plot_training_curves(train_history, val_history, plot_path, plot_title)
         print(f"[HyperMedDiff-Risk] Saved training curve plot to {plot_path}")
 
-        risk_metrics = evaluate_risk(test_loader, visit_enc, risk_lstm, risk_head, device)
+        val_y, val_p = collect_risk_probs(val_loader, visit_enc, risk_lstm, risk_head, device)
+        threshold = 0.5
+        if val_y is not None and val_y.ndim == 1:
+            threshold = select_best_threshold(val_y, val_p)
+        risk_metrics = evaluate_risk(
+            test_loader,
+            visit_enc,
+            risk_lstm,
+            risk_head,
+            device,
+            threshold=threshold,
+        )
+        if val_y is not None and val_y.ndim == 1:
+            risk_metrics["threshold"] = float(threshold)
         print("[HyperMedDiff-Risk] Test risk metrics (MedDiffusion-style):")
         print(json.dumps(risk_metrics, indent=2))
 
