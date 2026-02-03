@@ -42,8 +42,12 @@ def _build_global_split_map(subject_ids, seed, train_frac, val_frac):
 
 
 def _infer_label_cols(task_name: str):
-    if task_name in ("mortality", "los", "readmission"):
-        return [f"label_{task_name}"]
+    if task_name == "mortality":
+        return ["label_mortality"]
+    if task_name == "los":
+        return ["label_los_gt_7d"]
+    if task_name == "readmission":
+        return ["label_readmit_14d"]
     if task_name == "diagnosis":
         return [
             "label_septicemia",
