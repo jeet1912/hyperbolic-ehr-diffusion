@@ -8,12 +8,11 @@ import torch
 import torch.nn as nn
 
 from dataset import MimicCsvDataset, make_pad_collate
-
-try:
-    from sklearn.metrics import roc_auc_score, average_precision_score
-except Exception:  # pragma: no cover - fallback handled in code
-    roc_auc_score = None
-    average_precision_score = None
+from eval_utils import (
+    binary_classification_metrics,
+    multilabel_metrics,
+    select_best_threshold,
+)
 
 
 BATCH_SIZE = 32
@@ -103,79 +102,6 @@ def reverse_by_lengths(x: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
     if squeeze_last:
         out = out.squeeze(-1)
     return out
-
-
-def binary_classification_metrics(y_true, y_prob, threshold=0.5):
-    y_true = np.asarray(y_true).astype(int)
-    y_prob = np.asarray(y_prob)
-    y_pred = (y_prob >= threshold).astype(int)
-
-    tp = np.sum((y_true == 1) & (y_pred == 1))
-    tn = np.sum((y_true == 0) & (y_pred == 0))
-    fp = np.sum((y_true == 0) & (y_pred == 1))
-    fn = np.sum((y_true == 1) & (y_pred == 0))
-
-    total = tp + tn + fp + fn
-    acc = (tp + tn) / total if total else 0.0
-    precision = tp / (tp + fp) if (tp + fp) else 0.0
-    recall = tp / (tp + fn) if (tp + fn) else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
-
-    metrics = {"accuracy": float(acc), "f1": float(f1)}
-    if roc_auc_score is not None:
-        try:
-            metrics["auroc"] = float(roc_auc_score(y_true, y_prob))
-        except Exception:
-            metrics["auroc"] = float("nan")
-    if average_precision_score is not None:
-        try:
-            metrics["auprc"] = float(average_precision_score(y_true, y_prob))
-        except Exception:
-            metrics["auprc"] = float("nan")
-    return metrics
-
-
-def select_best_threshold(y_true, y_prob, thresholds=None):
-    if thresholds is None:
-        thresholds = np.linspace(0.05, 0.95, 19)
-    best_thr = 0.5
-    best_f1 = -1.0
-    for thr in thresholds:
-        metrics = binary_classification_metrics(y_true, y_prob, threshold=thr)
-        if metrics["f1"] > best_f1:
-            best_f1 = metrics["f1"]
-            best_thr = float(thr)
-    return best_thr
-
-
-def multilabel_metrics(y_true, y_prob, threshold=0.5):
-    y_true = np.asarray(y_true).astype(int)
-    y_prob = np.asarray(y_prob)
-    if y_true.ndim != 2:
-        raise ValueError("multilabel_metrics expects 2D arrays")
-
-    per_label_f1 = []
-    per_label_auroc = []
-    per_label_auprc = []
-    for i in range(y_true.shape[1]):
-        label = y_true[:, i]
-        metrics = binary_classification_metrics(
-            y_true[:, i], y_prob[:, i], threshold=threshold
-        )
-        per_label_f1.append(metrics["f1"])
-        if not (np.all(label == 0) or np.all(label == 1)):
-            if "auroc" in metrics:
-                per_label_auroc.append(metrics["auroc"])
-            if "auprc" in metrics:
-                per_label_auprc.append(metrics["auprc"])
-
-    return {
-        "f1_macro": float(np.mean(per_label_f1)) if per_label_f1 else 0.0,
-        "auroc_macro": float(np.nanmean(per_label_auroc)) if per_label_auroc else 0.0,
-        "auprc_macro": float(np.nanmean(per_label_auprc)) if per_label_auprc else 0.0,
-        "auroc_per_label": per_label_auroc,
-        "auprc_per_label": per_label_auprc,
-    }
 
 
 def run_epoch(loader, model, device, optimizer=None):
@@ -306,6 +232,7 @@ def main():
     train_idx = dataset.split_indices["train"]
     val_idx = dataset.split_indices["val"]
     test_idx = dataset.split_indices["test"]
+    print(f"[MIMIC] Splits: train={len(train_idx)} val={len(val_idx)} test={len(test_idx)}")
 
     train_ds = torch.utils.data.Subset(dataset, train_idx)
     val_ds = torch.utils.data.Subset(dataset, val_idx)
