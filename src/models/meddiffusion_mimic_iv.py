@@ -151,6 +151,7 @@ class MedDiffusionCsvDataset(Dataset):
         seed: int = 42,
         truncate: str = "latest",
         t_max: int = 256,
+        vocab_scope: str = "train",
     ):
         df = pd.read_csv(task_csv)
 
@@ -184,9 +185,11 @@ class MedDiffusionCsvDataset(Dataset):
 
         df = _prepare_events(df, bin_hours, drop_negative)
         df["split"] = df["subject_id"].map(split_map)
-        df_train = df[df["split"] == "train"]
+        if vocab_scope not in ("train", "all"):
+            raise ValueError("vocab_scope must be 'train' or 'all'")
+        df_vocab = df[df["split"] == "train"] if vocab_scope == "train" else df
 
-        self.code_map = _build_vocab(df_train)
+        self.code_map = _build_vocab(df_vocab)
         self.vocab_size = len(self.code_map) + 1
 
         df = _tokenize_events(df, self.code_map)
@@ -629,6 +632,9 @@ def main():
     parser.add_argument("--cohort-csv", type=str, required=True)
     parser.add_argument("--task-name", type=str, required=True,
                         choices=["mortality", "los", "readmission", "diagnosis"])
+    parser.add_argument("--vocab-scope", type=str, default="train",
+                        choices=["train", "all"],
+                        help="Use task-specific vocab from train split or global vocab from full task CSV.")
     parser.add_argument("--device", type=str, default="auto",
                         choices=["auto", "cpu", "cuda", "mps"])
     parser.add_argument("--lambda-gen", type=float, default=1.0)
@@ -651,6 +657,7 @@ def main():
         task_csv=args.task_csv,
         cohort_csv=args.cohort_csv,
         task_name=args.task_name,
+        vocab_scope=args.vocab_scope,
     )
     collate_fn = make_pad_collate_with_bins(dataset.vocab_size)
 

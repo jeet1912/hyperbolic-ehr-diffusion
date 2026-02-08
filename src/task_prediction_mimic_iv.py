@@ -1691,6 +1691,9 @@ def main():
     parser.add_argument("--task-name", type=str, default=None,
                         choices=["mortality", "los", "readmission", "diagnosis"],
                         help="Task name for CSV loader.")
+    parser.add_argument("--vocab-scope", type=str, default="train",
+                        choices=["train", "all"],
+                        help="Use task-specific vocab from train split or global vocab from full task CSV.")
     parser.add_argument("--bin-hours", type=int, default=6,
                         help="Bin size in hours for CSV loader.")
     parser.add_argument("--drop-negative", action="store_true",
@@ -1767,6 +1770,7 @@ def main():
         drop_negative=args.drop_negative,
         truncate=args.truncate,
         t_max=args.t_max,
+        vocab_scope=args.vocab_scope,
     )
     collate_fn = make_pad_collate(dataset.vocab_size)
 

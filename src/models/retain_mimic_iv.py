@@ -255,6 +255,9 @@ def main():
     parser.add_argument("--cohort-csv", type=str, required=True)
     parser.add_argument("--task-name", type=str, required=True,
                         choices=["mortality", "los", "readmission", "diagnosis"])
+    parser.add_argument("--vocab-scope", type=str, default="train",
+                        choices=["train", "all"],
+                        help="Use task-specific vocab from train split or global vocab from full task CSV.")
     parser.add_argument("--device", type=str, default="auto",
                         choices=["auto", "cpu", "cuda", "mps"])
     args = parser.parse_args()
@@ -275,6 +278,7 @@ def main():
         task_csv=args.task_csv,
         cohort_csv=args.cohort_csv,
         task_name=args.task_name,
+        vocab_scope=args.vocab_scope,
     )
     collate_fn = make_pad_collate(dataset.vocab_size)
 

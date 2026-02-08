@@ -193,6 +193,7 @@ class MimicCsvDataset(Dataset):
         seed: int = 42,
         truncate: str = "latest",
         t_max: int = 256,
+        vocab_scope: str = "train",
     ):
         print(f"[MIMIC] Loading task CSV {task_csv} ...")
         df = pd.read_csv(task_csv)
@@ -226,9 +227,11 @@ class MimicCsvDataset(Dataset):
 
         df = _prepare_events(df, bin_hours, drop_negative)
         df["split"] = df["subject_id"].map(split_map)
-        df_train = df[df["split"] == "train"]
+        if vocab_scope not in ("train", "all"):
+            raise ValueError("vocab_scope must be 'train' or 'all'")
+        df_vocab = df[df["split"] == "train"] if vocab_scope == "train" else df
 
-        self.code_map = _build_vocab(df_train)
+        self.code_map = _build_vocab(df_vocab)
         self.vocab_size = len(self.code_map) + 1
 
         df = _tokenize_events(df, self.code_map)

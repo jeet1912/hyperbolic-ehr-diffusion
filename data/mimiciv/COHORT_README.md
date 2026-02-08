@@ -118,6 +118,7 @@ python3 src/task_prediction_mimic_iv.py \
   --task-csv data/mimiciv/llemr_readmission_task.csv \
   --cohort-csv data/mimiciv/llemr_cohort.csv \
   --task-name readmission \
+  --vocab-scope train \
   --icd-tree data/mimiciii/icd9_parent_map.csv \
   --icd10-gem data/icd9toicd10cmgem.csv
 ```
@@ -148,7 +149,8 @@ RETAIN:
 python3 src/models/retain_mimic_iv.py \
   --task-csv data/mimiciv/llemr_readmission_task.csv \
   --cohort-csv data/mimiciv/llemr_cohort.csv \
-  --task-name readmission
+  --task-name readmission \
+  --vocab-scope train
 ```
 
 MedDiffusion baseline:
@@ -157,7 +159,8 @@ MedDiffusion baseline:
 python3 src/models/meddiffusion_mimic_iv.py \
   --task-csv data/mimiciv/llemr_mortality_task.csv \
   --cohort-csv data/mimiciv/llemr_cohort.csv \
-  --task-name mortality
+  --task-name mortality \
+  --vocab-scope train
 ```
 
 ## Co-occurrence graph + metrics
