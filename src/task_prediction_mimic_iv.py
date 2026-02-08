@@ -23,6 +23,7 @@ from traj_models import TrajectoryVelocityModel
 from regularizers import radius_regularizer
 from eval_utils import (
     binary_classification_metrics,
+    epoch_metrics,
     multilabel_metrics,
     select_best_threshold,
 )
@@ -1151,6 +1152,23 @@ def plot_training_curves(train_losses, val_losses, output_path, title):
     plt.close()
 
 
+def plot_val_metrics(val_accs, val_auprcs, output_path, title):
+    if not val_accs:
+        return
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    epochs = range(1, len(val_accs) + 1)
+    plt.figure(figsize=(10, 6))
+    plt.plot(epochs, val_accs, label="val accuracy")
+    plt.plot(epochs, val_auprcs, label="val AUPRC")
+    plt.xlabel("Epoch")
+    plt.ylabel("Metric")
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+
 def plot_umap_embeddings(
     embeddings: torch.Tensor,
     output_path: str,
@@ -1470,6 +1488,8 @@ def train_risk_model(
     patience_counter = 0
     train_history = []
     val_history = []
+    val_accs = []
+    val_auprcs = []
 
     for epoch in range(1, train_epochs + 1):
         train_loss = run_epoch(
@@ -1502,11 +1522,22 @@ def train_risk_model(
             code_emb=code_emb,
             check_code_emb_grad=check_code_emb_grad,
         )
+        val_y, val_p = collect_risk_probs(val_loader, visit_enc, risk_lstm, risk_head, device)
+        if val_y is not None:
+            metrics = epoch_metrics(val_y, val_p, threshold=0.5)
+            val_accs.append(metrics["accuracy"])
+            val_auprcs.append(metrics["auprc"])
 
         scheduler.step(val_loss)
         train_history.append(train_loss)
         val_history.append(val_loss)
-        print(f"[HyperMedDiff-Risk] Epoch {epoch:03d} | Train {train_loss:.4f} | Val {val_loss:.4f}")
+        if val_accs:
+            print(
+                f"[HyperMedDiff-Risk] Epoch {epoch:03d} | Train {train_loss:.4f} | Val {val_loss:.4f} "
+                f"| ValAcc {val_accs[-1]:.4f} | ValAUPRC {val_auprcs[-1]:.4f}"
+            )
+        else:
+            print(f"[HyperMedDiff-Risk] Epoch {epoch:03d} | Train {train_loss:.4f} | Val {val_loss:.4f}")
 
         if val_loss < best_val:
             best_val = val_loss
@@ -1529,7 +1560,7 @@ def train_risk_model(
         risk_lstm.load_state_dict(best_state["risk_lstm"])
         risk_head.load_state_dict(best_state["risk_head"])
 
-    return best_val, train_history, val_history
+    return best_val, train_history, val_history, val_accs, val_auprcs
 
 
 def evaluate_risk(
@@ -1846,7 +1877,7 @@ def main():
             out_dim = len(dataset.y[0])
         risk_head = RiskHead(dim=latent_dim, out_dim=out_dim).to(device)
 
-        best_val, train_history, val_history = train_risk_model(
+        best_val, train_history, val_history, val_accs, val_auprcs = train_risk_model(
             train_loader,
             val_loader,
             velocity_model,
@@ -1877,6 +1908,12 @@ def main():
         )
         plot_training_curves(train_history, val_history, plot_path, plot_title)
         print(f"[HyperMedDiff-Risk] Saved training curve plot to {plot_path}")
+        plot_val_metrics(
+            val_accs,
+            val_auprcs,
+            os.path.join(args.plot_dir, f"{exp_name}_metrics.png"),
+            f"{exp_name} | Val metrics",
+        )
 
         val_y, val_p = collect_risk_probs(val_loader, visit_enc, risk_lstm, risk_head, device)
         threshold = 0.5

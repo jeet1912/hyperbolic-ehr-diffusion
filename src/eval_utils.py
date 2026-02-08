@@ -161,3 +161,28 @@ def select_best_threshold(y_true, y_prob, thresholds=None):
             best_f1 = metrics["f1"]
             best_thr = float(thr)
     return best_thr
+
+
+def epoch_metrics(y_true, y_prob, threshold=0.5):
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
+    if y_true.ndim == 1:
+        metrics = binary_classification_metrics(y_true, y_prob, threshold=threshold)
+        return {
+            "accuracy": metrics["accuracy"],
+            "auprc": metrics["auprc"],
+        }
+    if y_true.ndim == 2:
+        # Macro accuracy across labels at fixed threshold.
+        accs = []
+        for i in range(y_true.shape[1]):
+            label_metrics = binary_classification_metrics(
+                y_true[:, i], y_prob[:, i], threshold=threshold
+            )
+            accs.append(label_metrics["accuracy"])
+        macro = multilabel_metrics(y_true, y_prob, threshold=threshold)
+        return {
+            "accuracy": float(np.mean(accs)) if accs else 0.0,
+            "auprc": macro["auprc_macro"],
+        }
+    raise ValueError("epoch_metrics expects 1D or 2D y_true")

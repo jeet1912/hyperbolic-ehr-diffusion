@@ -6,10 +6,12 @@ import os
 import numpy as np
 import torch
 import torch.nn as nn
+import matplotlib.pyplot as plt
 
 from dataset import MimicCsvDataset, make_pad_collate
 from eval_utils import (
     binary_classification_metrics,
+    epoch_metrics,
     multilabel_metrics,
     select_best_threshold,
 )
@@ -133,6 +135,40 @@ def run_epoch(loader, model, device, optimizer=None):
     return total_loss / max(total_samples, 1)
 
 
+def plot_training_curves(train_losses, val_losses, output_path, title):
+    if not train_losses:
+        return
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    epochs = range(1, len(train_losses) + 1)
+    plt.figure(figsize=(10, 6))
+    plt.plot(epochs, train_losses, label="train")
+    plt.plot(epochs, val_losses, label="val")
+    plt.xlabel("Epoch")
+    plt.ylabel("Total loss")
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+
+def plot_val_metrics(val_accs, val_auprcs, output_path, title):
+    if not val_accs:
+        return
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    epochs = range(1, len(val_accs) + 1)
+    plt.figure(figsize=(10, 6))
+    plt.plot(epochs, val_accs, label="val accuracy")
+    plt.plot(epochs, val_auprcs, label="val AUPRC")
+    plt.xlabel("Epoch")
+    plt.ylabel("Metric")
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+
 def train_model(train_loader, val_loader, model, device):
     optimizer = torch.optim.AdamW(model.parameters(), lr=TRAIN_LR, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=TRAIN_EPOCHS)
@@ -142,14 +178,27 @@ def train_model(train_loader, val_loader, model, device):
     patience = 0
     train_losses = []
     val_losses = []
+    val_accs = []
+    val_auprcs = []
 
     for epoch in range(1, TRAIN_EPOCHS + 1):
         train_loss = run_epoch(train_loader, model, device, optimizer=optimizer)
         val_loss = run_epoch(val_loader, model, device, optimizer=None)
+        val_y, val_p = collect_probs(val_loader, model, device)
+        if val_y is not None:
+            metrics = epoch_metrics(val_y, val_p, threshold=0.5)
+            val_accs.append(metrics["accuracy"])
+            val_auprcs.append(metrics["auprc"])
         scheduler.step()
         train_losses.append(train_loss)
         val_losses.append(val_loss)
-        print(f"[RETAIN] Epoch {epoch:03d} | Train {train_loss:.4f} | Val {val_loss:.4f}")
+        if val_accs:
+            print(
+                f"[RETAIN] Epoch {epoch:03d} | Train {train_loss:.4f} | Val {val_loss:.4f} "
+                f"| ValAcc {val_accs[-1]:.4f} | ValAUPRC {val_auprcs[-1]:.4f}"
+            )
+        else:
+            print(f"[RETAIN] Epoch {epoch:03d} | Train {train_loss:.4f} | Val {val_loss:.4f}")
 
         if val_loss < best_val:
             best_val = val_loss
@@ -165,7 +214,7 @@ def train_model(train_loader, val_loader, model, device):
         model.load_state_dict(best_state)
     if train_losses and val_losses:
         print(f"[RETAIN] Final Train/Val Loss: {train_losses[-1]:.4f} / {val_losses[-1]:.4f}")
-    return best_val, train_losses, val_losses
+    return best_val, train_losses, val_losses, val_accs, val_auprcs
 
 
 def collect_probs(loader, model, device):
@@ -257,8 +306,22 @@ def main():
         dropout=DROPOUT_RATE,
     ).to(device)
 
-    best_val, _, _ = train_model(train_loader, val_loader, model, device)
+    best_val, train_losses, val_losses, val_accs, val_auprcs = train_model(
+        train_loader, val_loader, model, device
+    )
     print(f"[RETAIN] Best validation loss: {best_val:.4f}")
+    plot_training_curves(
+        train_losses,
+        val_losses,
+        os.path.join("results", "plots", args.task_name, "RETAIN_loss.png"),
+        f"RETAIN {args.task_name} loss",
+    )
+    plot_val_metrics(
+        val_accs,
+        val_auprcs,
+        os.path.join("results", "plots", args.task_name, "RETAIN_metrics.png"),
+        f"RETAIN {args.task_name} val metrics",
+    )
 
     val_y, val_p = collect_probs(val_loader, model, device)
     threshold = 0.5
